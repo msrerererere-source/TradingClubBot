@@ -1,16 +1,13 @@
 import os
-import asyncio
 from dotenv import load_dotenv
+from theory_blocks import theory_blocks
+import asyncio
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
 from aiogram.types import Message
 from aiogram.utils.keyboard import ReplyKeyboardBuilder
 from subscription_check import check_subscription
 from keyboards import get_vip_keyboard
-
-
-
-# Импортируем функции из db (убедись, что они там есть)
 from db import init_db, upsert_user, check_vip_status, set_vip_subscription, cancel_vip_subscription
 
 # --- НАСТРОЙКИ (глобальные переменные) ---
@@ -27,9 +24,12 @@ if not token:
 # --- СОЗДАНИЕ БОТА И ДИСПЕТЧЕРА ---
 bot = Bot(token=token)
 dp = Dispatcher()
+init_db() 
 
 # --- ФУНКЦИИ КЛАВИАТУР ---
+
 def get_main_keyboard():
+    """Возвращает главное меню с кнопками"""
     builder = ReplyKeyboardBuilder()
     builder.button(text="📜 Правила клуба")
     builder.button(text="📅 Расписание сделок")
@@ -40,11 +40,14 @@ def get_main_keyboard():
     builder.adjust(2, 1, 1, 1, 1)
     return builder.as_markup(resize_keyboard=True)
 
+
+
 def get_guide_keyboard():
     builder = ReplyKeyboardBuilder()
     builder.button(text="🔁 Ещё раз показать гайд")
     builder.adjust(1)
     return builder.as_markup(resize_keyboard=True)
+
 
 def get_vip_action_keyboard():
     builder = ReplyKeyboardBuilder()
@@ -53,6 +56,7 @@ def get_vip_action_keyboard():
     builder.adjust(1)
     return builder.as_markup(resize_keyboard=True)
 
+
 # --- ХЕНДЛЕРЫ (ОБРАБОТЧИКИ СООБЩЕНИЙ) ---
 
 @dp.message(Command("start"))
@@ -60,207 +64,20 @@ async def cmd_start(message: Message):
     user = message.from_user
     await upsert_user(user.id, user.username)
     
-    welcome_text = (
-        "Привет! 👋 Добро пожаловать в Trading Club Bot!\n\n"
-        "Выбери действие в меню ниже или напиши /guide, чтобы получить гайд по Entry Point."
-    )
-    await message.answer(welcome_text, reply_markup=get_vip_keyboard())
+    welcome_text = """Привет! 👋
+Добро пожаловать в Trading Club Bot!
 
-@dp.callback_query(F.data == "vip_signals")
-async def handle_vip_signals(callback: CallbackQuery):
-    user_id = callback.from_user.id
+Здесь ты сможешь:
+- Проверять свой VIP-статус
+- Управлять подпиской
+- Получать торговые сигналы
+
+Нажми /start, чтобы начать!"""
     
-    # Проверяем подписку
-    is_subscribed = await check_subscription(user_id)
-    
-    if is_subscribed:
-        await callback.answer("✅ Доступ разрешён!", show_alert=False)
-        await callback.message.answer("📈 Сигнал: BUY на паре BTC/USDT, Entry: 60000")
-    else:
-        await callback.answer("❌ У тебя нет подписки на VIP-сигналы", show_alert=True)
-
-
-@dp.message(F.text.lower().in_(["привет", "здравствуй", "hi", "hello"]))
-async def echo_greeting(message: Message):
-    await message.answer(
-        "Привет-привет! Рада видеть тебя в клубе. \n"
-        "Чем могу помочь? Выбирай вариант ниже:",
-        reply_markup=get_main_keyboard()
-    )
-
-@dp.message(F.text == "📜 Правила клуба")
-async def show_rules(message: Message):
-    await message.answer(
-        "📖 Правила Trading Club:\n\n"
-        "1. Никаких обсуждений про политику.\n"
-        "2. Сделки обсуждаются только в закрытом чате.\n"
-        "3. Не давать финансовых советов без подтверждения.\n"
-        "4. Уважение к мнению других участников.\n"
-        "5. Никаких ссылок на сторонние биржи в общем чате.\n"
-        "6. Запрещено копировать любые материалы из клуба и передавать их сторонним людям.\n"
-        "7. Запрещена нецензурная брань и оскорбления.\n"
-        "8. Все вопросы по торговле или любые проблемы пишите администратору — он всегда ответит.\n"
-        "9. Весь ученический материал остаётся в клубе: им можно пользоваться только внутри клуба.\n"
-        "10. Разрешено скачивать лично мои VIP‑материалы (в них есть дополнительные стратегии и рабочие шаблоны).\n"
-        "Стоимость VIP‑материалов можно узнать у администратора."
-    )
-
-@dp.message(F.text == "⚡ Кратко о правилах")
-async def show_short_rules(message: Message):
-    await message.answer(
-        "⚡ Кратко о главных правилах клуба:\n\n"
-        "✅ Уважение и без политики — это база.\n"
-        "✅ Сделки и разбор — только в закрытом чате.\n"
-        "✅ Материалы клуба нельзя копировать и передавать.\n\n"
-        "Хочешь полный список? Нажми «📜 Правила клуба»."
-    )
-
-@dp.message(F.text == "📞 Связаться с администратором")
-async def contact_admin(message: Message):
-    admin_link = f"https://t.me/{ADMIN_USERNAME}"
-    await message.answer(
-        f"Хочешь задать вопрос напрямую?\n"
-        f"Нажми на ссылку ниже или скопируй её в Telegram:\n\n"
-        f"{admin_link}\n\n"
-        "Администратор всегда на связи и ответит на все волнующие вопросы."
-    )
-
-@dp.message(F.text == "📅 Расписание сделок")
-async def show_schedule(message: Message):
-    await message.answer(
-        "📅 Расписание торговых сессий:\n\n"
-        "Понедельник: 14:00–15:00 — разбор рынка.\n"
-        "Вторник: 14:00–15:00 — работа с ошибками и отработка паттернов.\n"
-        "Среда: 14:00–15:00 — разбор сделок недели.\n"
-        "Четверг: 14:00–15:00 — подготовка к пятнице и разбор новостей.\n"
-        "Пятница: 14:00–15:00 — итоги недели и планы на следующую неделю."
-    )
-
-@dp.message(Command("help"))
-async def cmd_help(message: Message):
-    text = (
-        "👋 **Помощь по боту Entry Point Club**\n\n"
-        "Вот что я умею:\n"
-        "- /start - начать заново, приветственное сообщение.\n"
-        "- /why-join - узнать, зачем подписываться на канал.\n"
-        "- /guide - получить бесплатный гайд «5 правил Entry Point».\n"
-        "- /glossary - словарь трейдерских терминов.\n"
-        "- /cheatsheet - шпаргалка по сделкам.\n\n"
-        "Если не нашёл ответа - просто напиши мне сюда, я помогу!"
-    )
-    await message.answer(text, parse_mode="Markdown")
-
-@dp.message(Command("guide"))
-async def send_guide(message: Message):
-    guide_text = (
-        "📘 ГАЙД ПО ENTRY POINT (Pocket Option)\n\n"
-        "Entry Point — это точка входа в сделку. Вот ключевые правила для бинарных опционов:\n"
-        "1. Ищи подтверждение тренда на старших таймфреймах — это поможет выбрать верное направление (CALL или PUT).\n"
-        "2. Дождись формирования паттерна (например, пин‑бара или поглощения) на рабочем таймфрейме.\n"
-        "3. Учитывай время экспирации: для свечных паттернов обычно ставят 1–3 свечи.\n"
-        "4. Не открывай сделку в моменты сильной волатильности или перед важными новостями.\n\n"
-        "⚠️ Важно: торговля бинарными опционами сопряжена с высоким риском потери средств. "
-        "Не инвестируй больше, чем можешь позволить себе потерять."
-    )
-    await message.answer(guide_text, reply_markup=get_guide_keyboard())
-
-@dp.message(F.text == "🔁 Ещё раз показать гайд")
-async def repeat_guide(message: Message):
-    guide_text = (
-        "📘 ГАЙД ПО ENTRY POINT (Pocket Option)\n\n"
-        "Entry Point — это точка входа в сделку. Вот ключевые правила для бинарных опционов:\n"
-        "1. Ищи подтверждение тренда на старших таймфреймах — это поможет выбрать верное направление (CALL или PUT).\n"
-        "2. Дождись формирования паттерна (например, пин‑бара или поглощения) на рабочем таймфрейме.\n"
-        "3. Учитывай время экспирации: для свечных паттернов обычно ставят 1–3 свечи.\n"
-        "4. Не открывай сделку в моменты сильной волатильности или перед важными новостями.\n\n"
-        "⚠️ Важно: торговля бинарными опционами сопряжена с высоким риском потери средств. "
-        "Не инвестируй больше, чем можешь позволить себе потерять."
-    )
-    await message.answer(guide_text, reply_markup=get_guide_keyboard())
-
-@dp.message(F.text == "💎 VIP: обучение и разбор сделок")
-async def vip_info(message: Message):
-    user_id = message.from_user.id
-    user = message.from_user
-    await upsert_user(user_id, user.username)
-
-    # Проверка статуса VIP (убедитесь, что функция check_vip_status есть в db.py)
-    try:
-        status = await check_vip_status(user_id)
-    except Exception as e:
-        print(f"Ошибка проверки VIP статуса: {e}")
-        status = {"is_vip": False, "is_expired": False}
-
-    if status.get("is_vip"):
-        await message.answer(
-            "✅ VIP‑доступ активен! 🎉\n\n"
-            "Ты в закрытом VIP‑потоке. Здесь мы разбираем сделки в моменте, смотрим ошибки и учимся торговать.\n"
-            "Для торговли используй свою платформу (РТС/Pocket Option), а сюда скидывай скрин или тикер — я помогу разобрать.\n\n"
-            "Что хочешь разобрать прямо сейчас? Напиши тикер (например, EURUSD) или прикрепи скрин сделки."
-        )
-    elif status.get("is_expired"):
-        await message.answer(
-            "⚠️ Твой VIP‑доступ истёк.\n\n"
-            "Хочешь продлить обучение, чтобы снова разбирать сделки в моменте и учиться?\n"
-            "Выбери действие ниже:",
-            reply_markup=get_vip_action_keyboard()
-        )
-    else:
-        await message.answer(
-            "💎 VIP‑обучение и разбор сделок — это платная услуга.\n\n"
-            "Что ты получишь:\n"
-            "• Разбор твоих сделок в моменте — без «воды», только по делу.\n"
-            "• Обучение и исправление ошибок — чтобы не повторять одни и те же ловушки.\n"
-            "• Закрытый поток с персональной обратной связью — отвечаю именно тебе.\n"
-            "• Живая торговля и разборы — в согласованное с тобой время (в рамках слотов).\n"
-            "• Практические нюансы, о которых трейдеры часто не говорят: как держать дисциплину, как работать с просадкой, где прячутся скрытые комиссии и как устроены реальные рыночные механики (включая OTC и поведение ликвидности).\n\n"
-            "Стоимость: плата раз в месяц.\n"
-            "Автопродление: если ты продлеваешь, подписка продлевается автоматически на следующий месяц.\n\n"
-            "Хочешь оформить доступ? Напиши «Хочу VIP» или нажми «Связаться с администратором», чтобы узнать точную стоимость и согласовать график."
-        )
-
-@dp.message(F.text == "✅ Продлить обучение (автопродление)")
-async def vip_extend(message: Message):
-    user_id = message.from_user.id
-    try:
-        await set_vip_subscription(user_id, days=30)
-        await message.answer(
-            "✅ Подписка продлена! Автопродление активировано.\n"
-            "Теперь ты снова в VIP‑потоке: скидывай сделки — будем разбирать ошибки и учиться торговать."
-        )
-    except Exception as e:
-        print(f"Ошибка продления подписки: {e}")
-        await message.answer("Произошла ошибка при продлении подписки. Пожалуйста, свяжитесь с администратором.")
-
-@dp.message(F.text == "❌ Не продлевать (отключить доступ)")
-async def vip_cancel(message: Message):
-    user_id = message.from_user.id
-    try:
-        await cancel_vip_subscription(user_id)
-        await message.answer(
-            "❌ Доступ к VIP‑обучению отключён.\n"
-            "Ты остаёшься в клубе, но персональный разбор сделок и закрытые материалы больше недоступны.\n"
-            "Если позже захочешь вернуться — нажми «💎 VIP: обучение и разбор сделок»."
-        )
-    except Exception as e:
-        print(f"Ошибка отмены подписки: {e}")
-        await message.answer("Произошла ошибка при отмене подписки. Пожалуйста, свяжитесь с администратором.")
-
-@dp.message()
-async def echo_other(message: Message):
-    await message.answer(
-        "Я не совсем поняла, но давай помогу!\n"
-        "Нажми на одну из кнопок под сообщением — там всё самое важное.",
-        reply_markup=get_main_keyboard()
-    )
-
-# --- ГЛАВНАЯ ФУНКЦИЯ ЗАПУСКА ---
+    await message.answer(welcome_text, reply_markup=get_main_keyboard())
 async def main():
-    # Сначала инициализируем базу данных
-    await init_db()
-    
-    # Запускаем поллинг
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
+
