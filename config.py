@@ -6,7 +6,7 @@ load_dotenv()
 
 
 def bot_display_name() -> str:
-    return os.getenv("BOT_DISPLAY_NAME", "Дашборд Титан Бот").strip() or "Дашборд Титан Бот"
+    return os.getenv("BOT_DISPLAY_NAME", "Титан Трекер").strip() or "Титан Трекер"
 
 
 def bot_token() -> str:

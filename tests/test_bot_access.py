@@ -151,7 +151,7 @@ class TitanFlowTests(unittest.IsolatedAsyncioTestCase):
         await db.set_vip_subscription(16, 30)
         message = FakeMessage(FakeUser(16, "member"))
         await present_titan(message)
-        self.assertIn("Дашборд Титан открыт", message.answers[0][0])
+        self.assertIn("Титан Трекер открыт", message.answers[0][0])
         self.assertIn("https://titan.example/app", message.answers[0][1].inline_keyboard[0][0].url)
         self.assertIn("uid=16", message.answers[0][1].inline_keyboard[0][0].url)
 
