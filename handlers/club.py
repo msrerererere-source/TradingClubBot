@@ -2,7 +2,7 @@ from aiogram import F, Router
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import CallbackQuery, Message
 
-from config import admin_username, titan_access_ttl_hours
+from config import admin_username, bot_display_name, titan_access_ttl_hours
 from db import (
     cancel_vip_subscription,
     check_vip_status,
@@ -56,12 +56,12 @@ async def cmd_start(message: Message) -> None:
             "/revoke <id> — закрыть доступ"
         )
     await message.answer(
-        "Привет. Это бот Trading Club и вход в Титан Трекер.\n\n"
-        "Титан Трекер собирает арбитраж и расхождения ставок финансирования "
-        "по 9 биржам: дашборд, скринер и фандинг. Терминал открывается по ссылке. "
+        f"Привет. Это {bot_display_name()}.\n\n"
+        "Бот открывает дашборд Титан Трекер: арбитраж и расхождения ставок финансирования "
+        "по 9 биржам. Внутри терминала разделы «Дашборд», «Скринер» и «Фандинг». "
         "Ссылку бот выдаёт, пока VIP-доступ активен.\n\n"
         "/status — проверить доступ\n"
-        "/titan — открыть терминал"
+        "/titan — открыть дашборд"
         + admin_help,
         reply_markup=get_main_keyboard(),
     )
@@ -109,7 +109,7 @@ async def cmd_revoke(message: Message, command: CommandObject) -> None:
     await message.answer(f"VIP закрыт для {user_id}.")
 
 
-@router.message(F.text == "🛰 Титан Трекер")
+@router.message(F.text == "🛰 Дашборд Титан")
 async def titan_button(message: Message) -> None:
     await present_titan(message)
 
@@ -123,7 +123,7 @@ async def vip_button(message: Message) -> None:
 async def rules_button(message: Message) -> None:
     await message.answer(
         "Правила клуба\n\n"
-        "1. Титан Трекер — наблюдательный терминал. Он показывает ценовой спред "
+        "1. Дашборд Титан — наблюдательный терминал. Он показывает ценовой спред "
         "и расхождение фандинга, заявки на биржи сам не отправляет.\n"
         "2. Ссылку на терминал получает участник с активным VIP.\n"
         "3. Разбор в клубе — это учебный материал, не поручение открыть сделку.\n"
@@ -136,7 +136,7 @@ async def rules_button(message: Message) -> None:
 @router.message(F.text == "📅 Расписание сделок")
 async def schedule_button(message: Message) -> None:
     await message.answer(
-        "Титан Трекер работает постоянно. На его панели стоят часы Токио, Лондона, "
+        "Дашборд Титан работает постоянно. На его панели стоят часы Токио, Лондона, "
         "Нью-Йорка и Москвы, чтобы торговая сессия была видна без пересчёта.\n\n"
         "Разборы клуба назначает администратор и публикует их отдельно.\n\n"
         + admin_contact(),
@@ -148,7 +148,7 @@ async def schedule_button(message: Message) -> None:
 async def help_button(message: Message) -> None:
     await message.answer(
         "Как пользоваться ботом\n\n"
-        "🛰 Титан Трекер — получить ссылку, если VIP активен.\n"
+        "🛰 Дашборд Титан — получить ссылку, если VIP активен.\n"
         "💎 VIP — дата окончания доступа.\n"
         "/status — то же самое текстом.\n"
         "/titan — открыть терминал.\n"
@@ -170,7 +170,7 @@ async def short_rules_button(message: Message) -> None:
     await message.answer(
         "Коротко\n"
         "• Терминал показывает расхождения и не торгует за вас.\n"
-        "• Ссылка на Титан Трекер живёт, пока действует VIP.\n"
+        "• Ссылка на дашборд Титан живёт, пока действует VIP.\n"
         "• Риск и размер позиции считаете вы.\n\n"
         f"Опора по свечам:\n{candles}",
         reply_markup=get_main_keyboard(),
@@ -182,13 +182,13 @@ async def renew_button(message: Message) -> None:
     if is_admin(message.from_user.username):
         await set_vip_subscription(message.from_user.id, 30)
         await message.answer(
-            "VIP продлён на 30 дней. Ссылку на Титан Трекер можно открыть сразу.",
+            "VIP продлён на 30 дней. Дашборд Титан можно открыть сразу.",
             reply_markup=get_vip_action_keyboard(),
         )
         return
     await message.answer(
         "Продление подтверждает администратор клуба. "
-        "После подтверждения бот снова выдаст ссылку на Титан Трекер.\n\n"
+        "После подтверждения бот снова выдаст ссылку на дашборд Титан.\n\n"
         + admin_contact(),
         reply_markup=get_main_keyboard(),
     )
@@ -199,7 +199,7 @@ async def cancel_button(message: Message) -> None:
     await upsert_user(message.from_user.id, message.from_user.username)
     await cancel_vip_subscription(message.from_user.id)
     await message.answer(
-        "VIP отключён. Ссылка на Титан Трекер для этого аккаунта закрыта.",
+        "VIP отключён. Ссылка на дашборд Титан для этого аккаунта закрыта.",
         reply_markup=get_main_keyboard(),
     )
 
@@ -246,14 +246,14 @@ async def _send_status(message: Message) -> None:
     record = await get_user(user.id)
     if active:
         expires = record["expires_at"] if record and record["expires_at"] else "без даты окончания"
-        text = f"VIP активен. Титан Трекер открыт.\nДо: {expires}"
+        text = f"VIP активен. Дашборд Титан открыт.\nДо: {expires}"
         markup = get_vip_action_keyboard()
     else:
         status = await check_vip_status(user.id)
         if status["is_vip"] and status["is_expired"]:
-            text = "Срок VIP истёк. Ссылка на Титан Трекер закрыта до продления."
+            text = "Срок VIP истёк. Ссылка на дашборд Титан закрыта до продления."
         else:
-            text = "VIP не подключён. Ссылка на Титан Трекер появится после активации."
+            text = "VIP не подключён. Ссылка на дашборд Титан появится после активации."
         text += "\n\n" + admin_contact()
         markup = get_main_keyboard()
     await message.answer(text, reply_markup=markup)
@@ -265,10 +265,10 @@ async def present_titan(message: Message) -> None:
     if not await check_subscription(user.id):
         status = await check_vip_status(user.id)
         if status["is_vip"] and status["is_expired"]:
-            reason = "Срок VIP истёк, поэтому ссылка на Титан Трекер закрыта."
+            reason = "Срок VIP истёк, поэтому ссылка на дашборд Титан закрыта."
         else:
             reason = (
-                "Титан Трекер доступен по ссылке участникам с активным VIP. "
+                "Дашборд Титан доступен по ссылке участникам с активным VIP. "
                 "В терминале три раздела: дашборд, скринер и фандинг."
             )
         await message.answer(reason + "\n\n" + admin_contact(), reply_markup=get_main_keyboard())
@@ -277,7 +277,7 @@ async def present_titan(message: Message) -> None:
     built = build_titan_link(user.id)
     if built is None:
         await message.answer(
-            "VIP-доступ активен. Адрес Титан Трекера ещё не задан: "
+            "VIP-доступ активен. Адрес дашборда Титан ещё не задан: "
             "в .env нужна переменная TITAN_TRACKER_URL.\n\n" + admin_contact(),
             reply_markup=get_vip_action_keyboard(),
         )
@@ -293,7 +293,7 @@ async def present_titan(message: Message) -> None:
     else:
         freshness = "Сейчас выдаётся общий адрес терминала. Персональная подпись включится после TITAN_ACCESS_SECRET."
     keyboard = titan_open_keyboard(link)
-    text = f"Титан Трекер открыт.{expires}\n{freshness}"
+    text = f"Дашборд Титан открыт.{expires}\n{freshness}"
     if keyboard is None:
         text += f"\n{link}"
     await message.answer(text, reply_markup=keyboard)

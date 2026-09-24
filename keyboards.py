@@ -6,7 +6,7 @@ from config import titan_webapp_enabled
 
 def get_main_keyboard():
     builder = ReplyKeyboardBuilder()
-    builder.button(text="🛰 Титан Трекер")
+    builder.button(text="🛰 Дашборд Титан")
     builder.button(text="💎 VIP: обучение и разбор сделок")
     builder.button(text="📜 Правила клуба")
     builder.button(text="📅 Расписание сделок")
@@ -29,7 +29,7 @@ def get_vip_action_keyboard():
 def get_vip_keyboard():
     """Старая кнопка оставлена: по ней бот открывает тот же вход в трекер."""
     builder = InlineKeyboardBuilder()
-    builder.button(text="🛰 Открыть Титан Трекер", callback_data="titan_access")
+    builder.button(text="🛰 Открыть дашборд Титан", callback_data="titan_access")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -41,7 +41,7 @@ def titan_open_keyboard(url: str) -> InlineKeyboardMarkup | None:
             [InlineKeyboardButton(text="Открыть в Telegram", web_app=WebAppInfo(url=url))]
         )
     if url.startswith("https://") or url.startswith("http://"):
-        rows.append([InlineKeyboardButton(text="Открыть Титан Трекер", url=url)])
+        rows.append([InlineKeyboardButton(text="Открыть дашборд Титан", url=url)])
     if not rows:
         return None
     return InlineKeyboardMarkup(inline_keyboard=rows)

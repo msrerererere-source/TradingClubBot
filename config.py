@@ -5,6 +5,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def bot_display_name() -> str:
+    return os.getenv("BOT_DISPLAY_NAME", "Дашборд Титан Бот").strip() or "Дашборд Титан Бот"
+
+
 def bot_token() -> str:
     return os.getenv("BOT_TOKEN", "").strip()
 

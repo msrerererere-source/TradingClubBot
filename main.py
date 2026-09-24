@@ -1,4 +1,4 @@
-"""Точка входа бота Trading Club.
+"""Точка входа бота «Дашборд Титан Бот».
 
 Запуск:
     pip install -r requirements.txt
