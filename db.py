@@ -27,15 +27,17 @@ async def get_user(user_id: int) -> Optional[aiosqlite.Row]:
         )
         return await cursor.fetchone()
 
-async def upsert_user(user_id: int, username: str):
-    """Добавляет пользователя или обновляет его данные, если он уже есть"""
+async def upsert_user(user_id: int, username: Optional[str]):
+    """Добавляет пользователя или обновляет username, не сбрасывая VIP."""
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute(
             """
-            INSERT OR REPLACE INTO users (user_id, username, is_vip, expires_at)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO users (user_id, username)
+            VALUES (?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                username = COALESCE(excluded.username, users.username)
             """,
-            (user_id, username, 0, None)
+            (user_id, username),
         )
         await db.commit()
     print(f"✅ Пользователь {user_id} ({username}) обработан в БД")
@@ -80,11 +82,13 @@ async def set_vip_subscription(user_id: int, days: int = 30):
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute(
             """
-            UPDATE users 
-            SET is_vip = 1, expires_at = ? 
-            WHERE user_id = ?
+            INSERT INTO users (user_id, is_vip, expires_at)
+            VALUES (?, 1, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                is_vip = 1,
+                expires_at = excluded.expires_at
             """,
-            (expires_at_str, user_id)
+            (user_id, expires_at_str),
         )
         await db.commit()
     print(f"✅ VIP подписка активирована для {user_id} на {days} дней. Окончание: {expires_at_str}")
