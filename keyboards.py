@@ -9,8 +9,7 @@ def get_main_keyboard():
     builder.button(text="🛰 Титан Трекер")
     builder.button(text="❓ Помощь")
     builder.button(text="📞 Связаться с администратором")
-    builder.button(text="⚡ Кратко о правилах")
-    builder.adjust(1, 1, 1, 1)
+    builder.adjust(1)
     return builder.as_markup(resize_keyboard=True)
 
 
