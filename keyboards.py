@@ -7,7 +7,6 @@ from config import titan_webapp_enabled
 def get_main_keyboard():
     builder = ReplyKeyboardBuilder()
     builder.button(text="🛰 Титан Трекер")
-    builder.button(text="❓ Помощь")
     builder.button(text="📞 Связаться с администратором")
     builder.adjust(1)
     return builder.as_markup(resize_keyboard=True)
