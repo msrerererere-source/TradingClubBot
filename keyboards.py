@@ -15,8 +15,6 @@ def get_main_keyboard():
 
 def get_vip_action_keyboard():
     builder = ReplyKeyboardBuilder()
-    builder.button(text="✅ Продлить обучение (автопродление)")
-    builder.button(text="❌ Не продлевать (отключить доступ)")
     builder.button(text="◀️ Главное меню")
     builder.adjust(1)
     return builder.as_markup(resize_keyboard=True)
