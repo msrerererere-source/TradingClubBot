@@ -12,6 +12,8 @@ from config import (
     titan_access_ttl_hours,
     titan_demo_password,
     titan_demo_url,
+    titan_pay_card,
+    titan_pay_crypto,
 )
 from db import (
     cancel_vip_subscription,
@@ -29,7 +31,7 @@ from keyboards import (
     CONTACT_BUTTON,
     DEMO_BUTTON,
     MENU_BUTTON,
-    TARIFF_OPTIONS,
+    PAY_BUTTON,
     TARIFFS_BUTTON,
     TRY_BUTTON,
     get_about_keyboard,
@@ -96,20 +98,52 @@ def contact_text() -> str:
         "Коротко по кнопкам:\n"
         "• 📊 Что это такое — описание и скриншоты дашборда, скринера и фандинга.\n"
         "• 🔓 Демо-доступ — ссылка и пароль на 24 часа.\n"
-        "• 💳 Тарифы — три варианта подписки.\n"
+        "• 💳 Тарифы — Dashboard, единоразово 15 000 ₽.\n"
         "• 📞 Связаться — написать администратору."
     )
 
 
 def tariffs_text() -> str:
-    if not TARIFF_OPTIONS:
-        return (
-            "Тарифы — три варианта подписки.\n"
-            "Названия и цены ещё не внесены в бота.\n"
-            "После оплаты администратор открывает доступ."
-        )
-    lines = "\n".join(f"• {title}" for title in TARIFF_OPTIONS)
-    return f"Три варианта подписки:\n{lines}\n\n{admin_contact()}"
+    return (
+        "💳 Тарифы\n"
+        "📊 Dashboard — единоразовый доступ — 15 000 ₽\n"
+        "Полный доступ к терминалу Титан Трекер.\n"
+        "Один платёж — бессрочный доступ.\n"
+        "Дашборд, скринер спредов, ставки фандинга —\n"
+        "все 9 бирж в одном окне.\n"
+        "Оплата:\n"
+        "₿ Криптовалюта\n"
+        "💳 Карта / перевод\n"
+        "После оплаты бот автоматически сгенерирует\n"
+        "пароль и выдаст ссылку на терминал\n"
+        "в течение 1 минуты.\n"
+        "⚠️ Терминал предоставляет аналитику и не\n"
+        "является торговой рекомендацией. Решение\n"
+        "о сделке принимаешь ты."
+    )
+
+
+def pay_text() -> str:
+    crypto = titan_pay_crypto()
+    card = titan_pay_card()
+    lines = [
+        "Оплата 15 000 ₽. Один платёж — бессрочный доступ.",
+        "",
+    ]
+    if crypto:
+        lines.append(f"₿ Криптовалюта: {crypto}")
+    else:
+        lines.append("₿ Криптовалюта")
+    if card:
+        lines.append(f"💳 Карта / перевод: {card}")
+    else:
+        lines.append("💳 Карта / перевод")
+    if not crypto and not card:
+        lines.append("")
+        lines.append(admin_contact())
+    lines.append("")
+    lines.append("После оплаты бот выдаст пароль и ссылку на терминал.")
+    return "\n".join(lines)
 
 
 def about_gallery() -> list[InputMediaPhoto]:
@@ -280,7 +314,13 @@ async def demo_button(message: Message) -> None:
 
 @router.message(F.text == TARIFFS_BUTTON)
 async def tariffs_button(message: Message) -> None:
-    await message.answer(tariffs_text(), reply_markup=get_tariffs_keyboard(TARIFF_OPTIONS))
+    await message.answer(tariffs_text(), reply_markup=get_tariffs_keyboard())
+
+
+@router.message(F.text == PAY_BUTTON)
+async def pay_button(message: Message) -> None:
+    await upsert_user(message.from_user.id, message.from_user.username)
+    await message.answer(pay_text(), reply_markup=get_tariffs_keyboard())
 
 
 @router.message(F.text.in_({CONTACT_BUTTON, "📞 Связаться с администратором"}))
@@ -358,7 +398,7 @@ async def _send_status(message: Message) -> None:
             text = "Срок доступа истёк. Ссылка на терминал закрыта."
         else:
             text = "Доступ ещё не открыт."
-        text += "\nДемо — на 24 часа. Тарифы — три варианта подписки.\n\n" + admin_contact()
+        text += "\nДемо — на 24 часа. Тариф — 15 000 ₽ единоразово.\n\n" + admin_contact()
         markup = get_main_keyboard()
     await message.answer(text, reply_markup=markup)
 

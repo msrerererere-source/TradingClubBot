@@ -10,9 +10,7 @@ CONTACT_BUTTON = "📞 Связаться"
 MENU_BUTTON = "◀️ Главное меню"
 TRY_BUTTON = "🔓 Хочу попробовать"
 BACK_BUTTON = "⬅️ Назад"
-
-# Три варианта подписки. Названия и цены приходят отдельно, пока список пуст.
-TARIFF_OPTIONS: list[str] = []
+PAY_BUTTON = "💳 Оплатить 15 000 ₽"
 
 
 def get_main_keyboard():
@@ -48,12 +46,11 @@ def get_vip_action_keyboard():
     return builder.as_markup(resize_keyboard=True)
 
 
-def get_tariffs_keyboard(options: list[str]):
+def get_tariffs_keyboard():
     builder = ReplyKeyboardBuilder()
-    for title in options:
-        builder.button(text=title)
-    builder.button(text=MENU_BUTTON)
-    builder.adjust(1)
+    builder.button(text=PAY_BUTTON)
+    builder.button(text=BACK_BUTTON)
+    builder.adjust(2)
     return builder.as_markup(resize_keyboard=True)
 
 

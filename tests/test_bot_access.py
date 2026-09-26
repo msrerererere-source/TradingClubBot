@@ -157,6 +157,8 @@ class TitanFlowTests(unittest.IsolatedAsyncioTestCase):
                 "TITAN_ACCESS_TTL_HOURS",
                 "TITAN_DEMO_URL",
                 "TITAN_DEMO_PASSWORD",
+                "TITAN_PAY_CRYPTO",
+                "TITAN_PAY_CARD",
             )
         }
         os.environ["TITAN_TRACKER_URL"] = "https://titan.example/app"
@@ -164,6 +166,8 @@ class TitanFlowTests(unittest.IsolatedAsyncioTestCase):
         os.environ["TITAN_ACCESS_TTL_HOURS"] = "12"
         os.environ["TITAN_DEMO_URL"] = ""
         os.environ["TITAN_DEMO_PASSWORD"] = ""
+        os.environ["TITAN_PAY_CRYPTO"] = ""
+        os.environ["TITAN_PAY_CARD"] = ""
 
     async def asyncTearDown(self):
         db.DB_NAME = self._previous
@@ -310,19 +314,35 @@ class TitanFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("TITAN_DEMO_URL", text)
         self.assertNotIn("Пароль:", text)
 
-    async def test_tariffs_do_not_invent_prices(self):
-        from handlers.club import tariffs_button
-        from keyboards import MENU_BUTTON, TARIFF_OPTIONS
+    async def test_tariffs_are_one_dashboard_payment(self):
+        from handlers.club import pay_button, tariffs_button, tariffs_text
+        from keyboards import BACK_BUTTON, PAY_BUTTON
 
-        self.assertEqual(TARIFF_OPTIONS, [])
         message = FakeMessage(FakeUser(24, "guest"))
         await tariffs_button(message)
+        self.assertEqual(message.answers[0][0], tariffs_text())
         text = message.answers[0][0]
-        for banned in ("15 000", "15000", "3 000", "7 500", "25 000", "единоразово", "₽"):
-            self.assertNotIn(banned, text)
-        self.assertIn("три варианта подписки", text.lower())
+        self.assertIn("15 000 ₽", text)
+        self.assertIn("единоразовый доступ", text)
+        self.assertIn("бессрочный доступ", text)
+        for banned in ("3 000", "7 500", "25 000", "подписк"):
+            self.assertNotIn(banned, text.lower() if banned == "подписк" else text)
         labels = [button.text for row in message.answers[0][1].keyboard for button in row]
-        self.assertEqual(labels, [MENU_BUTTON])
+        self.assertEqual(labels, [PAY_BUTTON, BACK_BUTTON])
+        self.assertEqual(len(message.answers[0][1].keyboard), 1)
+
+        os.environ["TITAN_PAY_CRYPTO"] = ""
+        os.environ["TITAN_PAY_CARD"] = ""
+        pay = FakeMessage(FakeUser(24, "guest"))
+        pay.text = PAY_BUTTON
+        await pay_button(pay)
+        paid = pay.answers[0][0]
+        self.assertIn("15 000 ₽", paid)
+        self.assertNotIn("https://titan.example", paid)
+        self.assertNotIn("uid=", paid)
+        from subscription_check import check_subscription
+
+        self.assertFalse(await check_subscription(24))
 
     async def test_contact_has_admin_and_faq(self):
         from handlers.club import contact_button
