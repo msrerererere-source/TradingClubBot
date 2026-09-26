@@ -1,3 +1,4 @@
+import logging
 import secrets
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -15,7 +16,9 @@ from config import (
 from db import (
     cancel_vip_subscription,
     check_vip_status,
+    expired_unnotified_demos,
     get_user,
+    mark_demo_notified,
     set_demo_access,
     set_vip_subscription,
     upsert_user,
@@ -30,6 +33,7 @@ from keyboards import (
     TARIFFS_BUTTON,
     TRY_BUTTON,
     get_about_keyboard,
+    get_demo_keyboard,
     get_main_keyboard,
     get_tariffs_keyboard,
     get_vip_action_keyboard,
@@ -118,10 +122,33 @@ def about_gallery() -> list[InputMediaPhoto]:
     return media
 
 
-def _keyboard_after_demo(message: Message):
-    if getattr(message, "text", None) == TRY_BUTTON:
-        return get_about_keyboard()
-    return get_main_keyboard()
+DEMO_LOGIN = "demo"
+
+
+def demo_access_text(url: str, password: str) -> str:
+    return (
+        "Даю тебе 24 часа полного доступа к терминалу.\n"
+        f"Ссылка: {url}\n"
+        f"Логин: {DEMO_LOGIN}\n"
+        f"Пароль: {password}\n"
+        "Что можно делать:\n"
+        "• Видеть все 9 бирж\n"
+        "• Смотреть спреды и фандинг\n"
+        "• Проверить, как работает счётчик свежести\n"
+        "Что нельзя:\n"
+        "• Менять настройки\n"
+        "• Торговать (терминал не отправляет заявки)\n"
+        "⏰ Доступ активен 24 часа с момента выдачи.\n"
+        "После — придёт уведомление, и доступ закроется.\n"
+        "Если зайдёт — пиши, откроем полный доступ."
+    )
+
+
+def demo_closed_text() -> str:
+    return (
+        "⏰ 24 часа демо закончились. Доступ закрыт.\n"
+        "Если терминал зашёл — напиши, откроем полный доступ."
+    )
 
 
 def _parse_positive_int(value: str) -> int:
@@ -138,10 +165,6 @@ def _new_demo_password() -> str:
     if shared:
         return shared
     return "".join(secrets.choice(DEMO_ALPHABET) for _ in range(6))
-
-
-def _format_until(moment: datetime) -> str:
-    return moment.strftime("%d.%m.%Y %H:%M")
 
 
 async def issue_demo(user_id: int, now: datetime | None = None) -> tuple[str, datetime]:
@@ -245,16 +268,13 @@ async def demo_button(message: Message) -> None:
     if not url:
         await message.answer(
             "Демо пока не открыто: в .env нет TITAN_DEMO_URL или TITAN_TRACKER_URL.",
-            reply_markup=_keyboard_after_demo(message),
+            reply_markup=get_demo_keyboard(),
         )
         return
-    password, until = await issue_demo(user.id)
+    password, _until = await issue_demo(user.id)
     await message.answer(
-        "Демо-доступ на 24 часа.\n\n"
-        f"Ссылка: {url}\n"
-        f"Пароль: {password}\n"
-        f"Действует до: {_format_until(until)}",
-        reply_markup=_keyboard_after_demo(message),
+        demo_access_text(url, password),
+        reply_markup=get_demo_keyboard(),
     )
 
 
@@ -358,6 +378,26 @@ async def present_titan(message: Message) -> None:
         )
         return
     await send_paid_link(message)
+
+
+async def watch_demo_expiry(bot) -> None:
+    """Пишет человеку, когда его 24 часа демо закончились."""
+    from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+
+    for row in await expired_unnotified_demos():
+        user_id = row["user_id"]
+        try:
+            await bot.send_message(
+                user_id,
+                demo_closed_text(),
+                reply_markup=get_main_keyboard(),
+            )
+        except (TelegramForbiddenError, TelegramBadRequest):
+            await mark_demo_notified(user_id)
+        except Exception:
+            logging.getLogger(__name__).exception("Не удалось закрыть демо %s", user_id)
+        else:
+            await mark_demo_notified(user_id)
 
 
 async def send_paid_link(message: Message) -> None:

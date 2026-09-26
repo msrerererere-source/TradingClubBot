@@ -208,16 +208,16 @@ class TitanFlowTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_try_button_opens_demo_and_back_returns_menu(self):
         from handlers.club import WELCOME, demo_button, main_menu_button
-        from keyboards import ABOUT_BUTTON, BACK_BUTTON, TRY_BUTTON
+        from keyboards import ABOUT_BUTTON, BACK_BUTTON, TARIFFS_BUTTON, TRY_BUTTON
 
         message = FakeMessage(FakeUser(26, "guest"))
         message.text = TRY_BUTTON
         await demo_button(message)
         text = message.answers[-1][0]
-        self.assertIn("24 часа", text)
+        self.assertIn("Логин: demo", text)
         self.assertIn("Пароль:", text)
         labels = [button.text for row in message.answers[-1][1].keyboard for button in row]
-        self.assertEqual(labels, [TRY_BUTTON, BACK_BUTTON])
+        self.assertEqual(labels, [TARIFFS_BUTTON, BACK_BUTTON])
 
         back = FakeMessage(FakeUser(26, "guest"))
         back.text = BACK_BUTTON
@@ -246,6 +246,8 @@ class TitanFlowTests(unittest.IsolatedAsyncioTestCase):
         await demo_button(message)
         text = "\n".join(item[0] for item in message.answers)
         self.assertIn("24 часа", text)
+        self.assertIn("Логин: demo", text)
+        self.assertIn("терминал не отправляет заявки", text)
         self.assertIn("https://titan.example/app", text)
         self.assertNotIn("uid=", text)
         self.assertNotIn("sig=", text)
@@ -257,7 +259,10 @@ class TitanFlowTests(unittest.IsolatedAsyncioTestCase):
         remaining = (until - datetime.now()).total_seconds()
         self.assertGreater(remaining, 23.9 * 3600)
         self.assertLess(remaining, 24 * 3600 + 30)
-        self.assertIn(_format_check(until), text)
+        from keyboards import BACK_BUTTON, TARIFFS_BUTTON
+
+        labels = [button.text for row in message.answers[-1][1].keyboard for button in row]
+        self.assertEqual(labels, [TARIFFS_BUTTON, BACK_BUTTON])
 
     async def test_demo_reuses_password_until_expiry_then_reissues(self):
         import aiosqlite
@@ -331,6 +336,24 @@ class TitanFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Демо-доступ", text)
         self.assertIn("Тарифы", text)
 
+    async def test_expired_demo_notifies_once(self):
+        from handlers.club import watch_demo_expiry
+
+        class FakeBot:
+            def __init__(self):
+                self.sent = []
+
+            async def send_message(self, chat_id, text, reply_markup=None):
+                self.sent.append((chat_id, text))
+
+        await db.set_demo_access(30, "ABC123", (datetime.now() - timedelta(minutes=1)).isoformat())
+        bot = FakeBot()
+        await watch_demo_expiry(bot)
+        await watch_demo_expiry(bot)
+        self.assertEqual(len(bot.sent), 1)
+        self.assertEqual(bot.sent[0][0], 30)
+        self.assertIn("Доступ закрыт", bot.sent[0][1])
+
     async def test_vip_receives_signed_link(self):
         from handlers.club import present_titan
 
@@ -349,10 +372,6 @@ def _line_value(text: str, prefix: str) -> str:
         if line.startswith(prefix):
             return line[len(prefix):].strip()
     raise AssertionError(text)
-
-
-def _format_check(moment: datetime) -> str:
-    return moment.strftime("%d.%m.%Y %H:%M")
 
 
 if __name__ == "__main__":

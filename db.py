@@ -15,7 +15,8 @@ async def init_db():
                 expires_at TEXT,
                 joined_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 demo_password TEXT,
-                demo_until TEXT
+                demo_until TEXT,
+                demo_notified INTEGER DEFAULT 0
             )
         """)
         cursor = await db.execute("PRAGMA table_info(users)")
@@ -24,6 +25,8 @@ async def init_db():
             await db.execute("ALTER TABLE users ADD COLUMN demo_password TEXT")
         if "demo_until" not in columns:
             await db.execute("ALTER TABLE users ADD COLUMN demo_until TEXT")
+        if "demo_notified" not in columns:
+            await db.execute("ALTER TABLE users ADD COLUMN demo_notified INTEGER DEFAULT 0")
         await db.commit()
 
 async def get_user(user_id: int) -> Optional[aiosqlite.Row]:
@@ -106,13 +109,41 @@ async def set_demo_access(user_id: int, password: str, until: str) -> None:
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute(
             """
-            INSERT INTO users (user_id, demo_password, demo_until)
-            VALUES (?, ?, ?)
+            INSERT INTO users (user_id, demo_password, demo_until, demo_notified)
+            VALUES (?, ?, ?, 0)
             ON CONFLICT(user_id) DO UPDATE SET
                 demo_password = excluded.demo_password,
-                demo_until = excluded.demo_until
+                demo_until = excluded.demo_until,
+                demo_notified = 0
             """,
             (user_id, password, until),
+        )
+        await db.commit()
+
+
+async def expired_unnotified_demos(now: datetime | None = None) -> list[aiosqlite.Row]:
+    """Демо, у которых 24 часа уже вышли и уведомление ещё не отправлено."""
+    moment = (now or datetime.now()).isoformat()
+    async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT user_id, demo_until
+            FROM users
+            WHERE demo_until IS NOT NULL
+              AND demo_until <= ?
+              AND COALESCE(demo_notified, 0) = 0
+            """,
+            (moment,),
+        )
+        return list(await cursor.fetchall())
+
+
+async def mark_demo_notified(user_id: int) -> None:
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "UPDATE users SET demo_notified = 1 WHERE user_id = ?",
+            (user_id,),
         )
         await db.commit()
 

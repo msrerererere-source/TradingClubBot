@@ -14,6 +14,16 @@ from aiogram import Bot, Dispatcher
 from config import bot_token
 from db import init_db
 from handlers import router
+from handlers.club import watch_demo_expiry
+
+
+async def _watch_demo(bot: Bot) -> None:
+    while True:
+        try:
+            await watch_demo_expiry(bot)
+        except Exception:
+            logging.exception("Проверка демо не прошла")
+        await asyncio.sleep(60)
 
 
 async def main() -> None:
@@ -26,7 +36,11 @@ async def main() -> None:
     bot = Bot(token=token)
     dispatcher = Dispatcher()
     dispatcher.include_router(router)
-    await dispatcher.start_polling(bot)
+    watcher = asyncio.create_task(_watch_demo(bot))
+    try:
+        await dispatcher.start_polling(bot)
+    finally:
+        watcher.cancel()
 
 
 if __name__ == "__main__":

@@ -33,6 +33,14 @@ def get_about_keyboard():
     return builder.as_markup(resize_keyboard=True)
 
 
+def get_demo_keyboard():
+    builder = ReplyKeyboardBuilder()
+    builder.button(text=TARIFFS_BUTTON)
+    builder.button(text=BACK_BUTTON)
+    builder.adjust(2)
+    return builder.as_markup(resize_keyboard=True)
+
+
 def get_vip_action_keyboard():
     builder = ReplyKeyboardBuilder()
     builder.button(text=MENU_BUTTON)
