@@ -110,6 +110,9 @@ class FakeMessage:
     async def answer(self, text: str, reply_markup=None):
         self.answers.append((text, reply_markup))
 
+    async def answer_media_group(self, media):
+        self.gallery = list(media)
+
 
 class TitanFlowTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -148,6 +151,10 @@ class TitanFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("7 500", text)
         self.assertNotIn("25 000", text)
         self.assertNotIn("https://titan.example", text)
+        self.assertEqual(
+            [item.caption.split(".", 1)[0] for item in message.gallery],
+            ["Главная", "Дашборд", "Скринер", "Фандинг"],
+        )
 
     async def test_vip_receives_signed_link(self):
         from handlers.club import present_titan
@@ -158,6 +165,7 @@ class TitanFlowTests(unittest.IsolatedAsyncioTestCase):
         opened = next(item for item in message.answers if "Титан Трекер открыт" in item[0])
         self.assertIn("https://titan.example/app", opened[1].inline_keyboard[0][0].url)
         self.assertIn("uid=16", opened[1].inline_keyboard[0][0].url)
+        self.assertEqual(len(message.gallery), 4)
 
 
 if __name__ == "__main__":

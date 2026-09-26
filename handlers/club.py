@@ -1,6 +1,8 @@
+from pathlib import Path
+
 from aiogram import F, Router
 from aiogram.filters import Command, CommandObject, CommandStart
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, FSInputFile, InputMediaPhoto, Message
 
 from config import admin_username, bot_display_name, titan_access_ttl_hours
 from db import (
@@ -281,8 +283,37 @@ def price_text() -> str:
     return "Стоимость: 15 000 ₽.\nОплата один раз. Подписки нет."
 
 
+TITAN_GALLERY = (
+    ("01-main.jpg", "Главная. Что делает терминал и как устроены разделы."),
+    ("02-dashboard.jpg", "Дашборд. Общая картина рынка и данные в реальном времени."),
+    ("03-screener.jpg", "Скринер. Расхождение цены между биржами."),
+    ("04-funding.jpg", "Фандинг. Где ставки финансирования разошлись."),
+)
+
+
+def titan_gallery() -> list[InputMediaPhoto]:
+    folder = Path(__file__).resolve().parent.parent / "images" / "titan"
+    media = []
+    for name, caption in TITAN_GALLERY:
+        path = folder / name
+        if path.is_file():
+            media.append(InputMediaPhoto(media=FSInputFile(path), caption=caption))
+    return media
+
+
+async def send_titan_gallery(message: Message) -> None:
+    media = titan_gallery()
+    if not media:
+        return
+    sender = getattr(message, "answer_media_group", None)
+    if sender is None:
+        return
+    await sender(media=media)
+
+
 async def present_titan(message: Message) -> None:
     await message.answer(titan_about_text())
+    await send_titan_gallery(message)
     user = message.from_user
     await upsert_user(user.id, user.username)
     if not await check_subscription(user.id):
