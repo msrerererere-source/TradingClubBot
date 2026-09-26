@@ -141,8 +141,12 @@ class TitanFlowTests(unittest.IsolatedAsyncioTestCase):
 
         message = FakeMessage(FakeUser(15, "guest"))
         await present_titan(message)
-        text = message.answers[0][0]
-        self.assertIn("активным VIP", text)
+        text = "\n".join(item[0] for item in message.answers)
+        self.assertIn("15 000", text)
+        self.assertIn("один раз", text)
+        self.assertNotIn("3 000", text)
+        self.assertNotIn("7 500", text)
+        self.assertNotIn("25 000", text)
         self.assertNotIn("https://titan.example", text)
 
     async def test_vip_receives_signed_link(self):
@@ -151,9 +155,9 @@ class TitanFlowTests(unittest.IsolatedAsyncioTestCase):
         await db.set_vip_subscription(16, 30)
         message = FakeMessage(FakeUser(16, "member"))
         await present_titan(message)
-        self.assertIn("Титан Трекер открыт", message.answers[0][0])
-        self.assertIn("https://titan.example/app", message.answers[0][1].inline_keyboard[0][0].url)
-        self.assertIn("uid=16", message.answers[0][1].inline_keyboard[0][0].url)
+        opened = next(item for item in message.answers if "Титан Трекер открыт" in item[0])
+        self.assertIn("https://titan.example/app", opened[1].inline_keyboard[0][0].url)
+        self.assertIn("uid=16", opened[1].inline_keyboard[0][0].url)
 
 
 if __name__ == "__main__":

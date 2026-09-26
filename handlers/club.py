@@ -58,8 +58,8 @@ async def cmd_start(message: Message) -> None:
     await message.answer(
         f"Привет. Это {bot_display_name()}.\n\n"
         "Арбитраж и расхождения ставок финансирования по 9 биржам. "
-        "Внутри разделы «Дашборд», «Скринер» и «Фандинг». "
-        "Ссылку бот выдаёт, пока VIP-доступ активен.\n\n"
+        "Внутри разделы «Дашборд», «Скринер» и «Фандинг».\n\n"
+        f"{price_text()}\n\n"
         "/status — проверить доступ\n"
         "/titan — открыть Титан Трекер"
         + admin_help,
@@ -244,14 +244,14 @@ async def _send_status(message: Message) -> None:
     record = await get_user(user.id)
     if active:
         expires = record["expires_at"] if record and record["expires_at"] else "без даты окончания"
-        text = f"VIP активен. Титан Трекер открыт.\nДо: {expires}"
+        text = f"Доступ открыт. Титан Трекер можно открыть.\nДо: {expires}"
         markup = get_vip_action_keyboard()
     else:
         status = await check_vip_status(user.id)
         if status["is_vip"] and status["is_expired"]:
-            text = "Срок VIP истёк. Ссылка на Титан Трекер закрыта до продления."
+            text = "Срок доступа истёк. Ссылка на Титан Трекер закрыта."
         else:
-            text = "VIP не подключён. Ссылка на Титан Трекер появится после активации."
+            text = "Доступ ещё не открыт.\n" + price_text()
         text += "\n\n" + admin_contact()
         markup = get_main_keyboard()
     await message.answer(text, reply_markup=markup)
@@ -272,8 +272,13 @@ def titan_about_text() -> str:
         "• Не открывает сделки на биржах.\n"
         "• Не обещает прибыль.\n"
         "• Объём и решение о входе остаются за человеком.\n\n"
-        "Ссылку на терминал бот выдаёт, пока доступ активен."
+        f"{price_text()}\n"
+        "Ссылку на терминал бот выдаёт после оплаты."
     )
+
+
+def price_text() -> str:
+    return "Стоимость: 15 000 ₽.\nОплата один раз. Подписки нет."
 
 
 async def present_titan(message: Message) -> None:
@@ -283,11 +288,11 @@ async def present_titan(message: Message) -> None:
     if not await check_subscription(user.id):
         status = await check_vip_status(user.id)
         if status["is_vip"] and status["is_expired"]:
-            reason = "Срок VIP истёк, поэтому ссылка на Титан Трекер закрыта."
+            reason = "Срок доступа истёк, поэтому ссылка на Титан Трекер закрыта."
         else:
             reason = (
-                "Титан Трекер доступен по ссылке участникам с активным VIP. "
-                "В терминале три раздела: дашборд, скринер и фандинг."
+                "Титан Трекер стоит 15 000 ₽. Оплата один раз, подписки нет. "
+                "Ссылка на терминал открывается после оплаты."
             )
         await message.answer(reason + "\n\n" + admin_contact(), reply_markup=get_main_keyboard())
         return
