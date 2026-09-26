@@ -11,6 +11,8 @@ MENU_BUTTON = "◀️ Главное меню"
 TRY_BUTTON = "🔓 Хочу попробовать"
 BACK_BUTTON = "⬅️ Назад"
 PAY_BUTTON = "💳 Оплатить 15 000 ₽"
+GO_PAY_BUTTON = "💳 Перейти к оплате"
+HOME_BUTTON = "⬅️ В главное меню"
 WRITE_BUTTON = "💬 Написать разработчику"
 
 
@@ -60,6 +62,29 @@ def get_tariffs_keyboard():
     builder.button(text=PAY_BUTTON)
     builder.button(text=BACK_BUTTON)
     builder.adjust(2)
+    return builder.as_markup(resize_keyboard=True)
+
+
+def get_checkout_keyboard(url: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[
+            InlineKeyboardButton(text=GO_PAY_BUTTON, url=url),
+            InlineKeyboardButton(text=BACK_BUTTON, callback_data="pay_back"),
+        ]]
+    )
+
+
+def get_home_keyboard():
+    builder = ReplyKeyboardBuilder()
+    builder.button(text=HOME_BUTTON)
+    builder.adjust(1)
+    return builder.as_markup(resize_keyboard=True)
+
+
+def get_pay_again_keyboard():
+    builder = ReplyKeyboardBuilder()
+    builder.button(text=PAY_BUTTON)
+    builder.adjust(1)
     return builder.as_markup(resize_keyboard=True)
 
 

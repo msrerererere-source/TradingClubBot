@@ -16,11 +16,10 @@ from aiogram.types import (
 
 from config import (
     admin_username,
+    paid_terminal_url,
     titan_access_ttl_hours,
     titan_demo_password,
     titan_demo_url,
-    titan_pay_card,
-    titan_pay_sbp,
 )
 from db import (
     cancel_vip_subscription,
@@ -28,6 +27,8 @@ from db import (
     expired_unnotified_demos,
     get_user,
     mark_demo_notified,
+    mark_payment_reminded,
+    payments_to_remind,
     set_demo_access,
     set_vip_subscription,
     upsert_user,
@@ -37,19 +38,24 @@ from keyboards import (
     BACK_BUTTON,
     CONTACT_BUTTON,
     DEMO_BUTTON,
+    HOME_BUTTON,
     MENU_BUTTON,
     PAY_BUTTON,
     TARIFFS_BUTTON,
     TRY_BUTTON,
     WRITE_BUTTON,
     get_about_keyboard,
+    get_checkout_keyboard,
     get_contact_keyboard,
     get_demo_keyboard,
+    get_home_keyboard,
     get_main_keyboard,
+    get_pay_again_keyboard,
     get_tariffs_keyboard,
     get_vip_action_keyboard,
     titan_open_keyboard,
 )
+from services.payment_flow import current_access, start_checkout
 from services.titan_access import build_titan_link
 from subscription_check import check_subscription
 
@@ -167,27 +173,58 @@ def tariffs_text() -> str:
     )
 
 
-def pay_text() -> str:
-    card = titan_pay_card()
-    sbp = titan_pay_sbp()
-    lines = [
-        "Оплата 15 000 ₽. Один платёж — бессрочный доступ.",
-        "",
-    ]
-    if card:
-        lines.append(f"💳 Банковская карта: {card}")
-    else:
-        lines.append("💳 Банковская карта")
-    if sbp:
-        lines.append(f"📲 СБП — перевод по QR или ссылке: {sbp}")
-    else:
-        lines.append("📲 СБП — перевод по QR или ссылке")
-    if not card and not sbp:
-        lines.append("")
-        lines.append(admin_contact())
-    lines.append("")
-    lines.append("После оплаты бот выдаст пароль и ссылку на терминал.")
-    return "\n".join(lines)
+def checkout_text() -> str:
+    return (
+        "💳 Оплата доступа — 15 000 ₽\n"
+        "Нажми на кнопку ниже, чтобы перейти\n"
+        "к оплате. После оплаты доступ придёт\n"
+        "автоматически.\n"
+        "👇"
+    )
+
+
+def checkout_unconfigured_text() -> str:
+    return (
+        "💳 Оплата доступа — 15 000 ₽\n"
+        "Страница оплаты ещё не подключена.\n"
+        "Нужны ROBOKASSA_MERCHANT_LOGIN, ROBOKASSA_PASSWORD1 и ROBOKASSA_PASSWORD2."
+    )
+
+
+def access_granted_text(url: str, password: str) -> str:
+    return (
+        "✅ Оплата получена! Доступ открыт.\n"
+        "🔗 Ссылка на терминал:\n"
+        f"{url}\n"
+        "🔑 Твой пароль:\n"
+        f"{password}\n"
+        "Как зайти:\n"
+        "1. Открой ссылку в браузере\n"
+        "2. Введи пароль в поле входа\n"
+        "3. Терминал готов к работе\n"
+        "⚠️ Пароль персональный, не передавай его\n"
+        "третьим лицам.\n"
+        "Если что-то не работает — напиши в этот\n"
+        "бот, мы поможем."
+    )
+
+
+def already_access_text(url: str, password: str) -> str:
+    return (
+        "✅ У тебя уже есть доступ к терминалу.\n"
+        f"🔗 Ссылка: {url}\n"
+        f"🔑 Пароль: {password}"
+    )
+
+
+def reminder_text() -> str:
+    return (
+        "💳 Ты начал оплату доступа к Титан Трекер,\n"
+        "но платёж не завершён.\n"
+        "Если возникли сложности — напиши сюда,\n"
+        "поможем разобраться.\n"
+        "👇"
+    )
 
 
 def about_gallery() -> list[InputMediaPhoto]:
@@ -358,13 +395,66 @@ async def demo_button(message: Message) -> None:
 
 @router.message(F.text == TARIFFS_BUTTON)
 async def tariffs_button(message: Message) -> None:
+    await upsert_user(message.from_user.id, message.from_user.username)
+    access = await current_access(message.from_user.id)
+    if access is not None:
+        url, password = access
+        await message.answer(already_access_text(url, password), reply_markup=get_home_keyboard())
+        return
     await message.answer(tariffs_text(), reply_markup=get_tariffs_keyboard())
 
 
 @router.message(F.text == PAY_BUTTON)
 async def pay_button(message: Message) -> None:
     await upsert_user(message.from_user.id, message.from_user.username)
-    await message.answer(pay_text(), reply_markup=get_tariffs_keyboard())
+    access = await current_access(message.from_user.id)
+    if access is not None:
+        url, password = access
+        await message.answer(already_access_text(url, password), reply_markup=get_home_keyboard())
+        return
+    pay_url = await start_checkout(message.from_user.id)
+    if not pay_url:
+        await message.answer(checkout_unconfigured_text(), reply_markup=get_tariffs_keyboard())
+        return
+    await message.answer(checkout_text(), reply_markup=get_checkout_keyboard(pay_url))
+
+
+@router.callback_query(F.data == "pay_back")
+async def pay_back(callback: CallbackQuery) -> None:
+    await callback.answer()
+    if isinstance(callback.message, Message):
+        await callback.message.answer(WELCOME, reply_markup=get_main_keyboard())
+
+
+async def deliver_paid_access(bot, user_id: int, password: str) -> None:
+    await bot.send_message(
+        user_id,
+        access_granted_text(paid_terminal_url(), password),
+        reply_markup=get_home_keyboard(),
+    )
+
+
+async def watch_unpaid(bot) -> None:
+    """Через 30 минут напоминает, если оплата так и не прошла."""
+    from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+
+    for row in await payments_to_remind():
+        user_id = row["user_id"]
+        if await current_access(user_id) is not None:
+            await mark_payment_reminded(row["inv_id"])
+            continue
+        try:
+            await bot.send_message(
+                user_id,
+                reminder_text(),
+                reply_markup=get_pay_again_keyboard(),
+            )
+        except (TelegramForbiddenError, TelegramBadRequest):
+            await mark_payment_reminded(row["inv_id"])
+        except Exception:
+            logging.getLogger(__name__).exception("Не удалось напомнить об оплате %s", user_id)
+        else:
+            await mark_payment_reminded(row["inv_id"])
 
 
 @router.message(F.text.in_({CONTACT_BUTTON, "📞 Связаться с администратором"}))
@@ -404,7 +494,7 @@ async def cancel_button(message: Message) -> None:
     )
 
 
-@router.message(F.text.in_({MENU_BUTTON, BACK_BUTTON}))
+@router.message(F.text.in_({MENU_BUTTON, BACK_BUTTON, HOME_BUTTON}))
 async def main_menu_button(message: Message) -> None:
     await message.answer(WELCOME, reply_markup=get_main_keyboard())
 

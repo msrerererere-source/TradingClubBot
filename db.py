@@ -16,17 +16,37 @@ async def init_db():
                 joined_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 demo_password TEXT,
                 demo_until TEXT,
-                demo_notified INTEGER DEFAULT 0
+                demo_notified INTEGER DEFAULT 0,
+                access_password TEXT,
+                paid_at TEXT,
+                access_status TEXT
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS payments (
+                inv_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                amount TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                paid_at TEXT,
+                password TEXT,
+                reminded INTEGER DEFAULT 0,
+                notified INTEGER DEFAULT 0
             )
         """)
         cursor = await db.execute("PRAGMA table_info(users)")
         columns = {row[1] for row in await cursor.fetchall()}
-        if "demo_password" not in columns:
-            await db.execute("ALTER TABLE users ADD COLUMN demo_password TEXT")
-        if "demo_until" not in columns:
-            await db.execute("ALTER TABLE users ADD COLUMN demo_until TEXT")
-        if "demo_notified" not in columns:
-            await db.execute("ALTER TABLE users ADD COLUMN demo_notified INTEGER DEFAULT 0")
+        for name, declaration in (
+            ("demo_password", "TEXT"),
+            ("demo_until", "TEXT"),
+            ("demo_notified", "INTEGER DEFAULT 0"),
+            ("access_password", "TEXT"),
+            ("paid_at", "TEXT"),
+            ("access_status", "TEXT"),
+        ):
+            if name not in columns:
+                await db.execute(f"ALTER TABLE users ADD COLUMN {name} {declaration}")
         await db.commit()
 
 async def get_user(user_id: int) -> Optional[aiosqlite.Row]:
@@ -148,6 +168,98 @@ async def mark_demo_notified(user_id: int) -> None:
         await db.commit()
 
 
+async def create_payment(user_id: int, amount: str = "15000.00", now: datetime | None = None) -> int:
+    """Новый счёт. Старые незакрытые счета этого человека больше не напоминают."""
+    moment = (now or datetime.now()).isoformat()
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            """
+            UPDATE payments
+            SET reminded = 1
+            WHERE user_id = ? AND status = 'pending'
+            """,
+            (user_id,),
+        )
+        cursor = await db.execute(
+            """
+            INSERT INTO payments (user_id, amount, status, created_at, reminded, notified)
+            VALUES (?, ?, 'pending', ?, 0, 0)
+            """,
+            (user_id, amount, moment),
+        )
+        await db.commit()
+        return int(cursor.lastrowid)
+
+
+async def get_payment(inv_id: int) -> Optional[aiosqlite.Row]:
+    async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT * FROM payments WHERE inv_id = ?", (inv_id,))
+        return await cursor.fetchone()
+
+
+async def activate_paid_access(user_id: int, password: str, paid_at: str, inv_id: int) -> None:
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            """
+            UPDATE payments
+            SET status = 'paid', paid_at = ?, password = ?, notified = 0
+            WHERE inv_id = ?
+            """,
+            (paid_at, password, inv_id),
+        )
+        await db.execute(
+            """
+            INSERT INTO users (user_id, is_vip, expires_at, access_password, paid_at, access_status)
+            VALUES (?, 1, NULL, ?, ?, 'активен')
+            ON CONFLICT(user_id) DO UPDATE SET
+                is_vip = 1,
+                expires_at = NULL,
+                access_password = excluded.access_password,
+                paid_at = excluded.paid_at,
+                access_status = 'активен'
+            """,
+            (user_id, password, paid_at),
+        )
+        await db.commit()
+
+
+async def mark_payment_notified(inv_id: int) -> None:
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("UPDATE payments SET notified = 1 WHERE inv_id = ?", (inv_id,))
+        await db.commit()
+
+
+async def payments_to_remind(now: datetime | None = None, minutes: int = 30) -> list[aiosqlite.Row]:
+    moment = now or datetime.now()
+    deadline = (moment - timedelta(minutes=minutes)).isoformat()
+    async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT inv_id, user_id, created_at
+            FROM payments AS pending
+            WHERE status = 'pending'
+              AND COALESCE(reminded, 0) = 0
+              AND created_at <= ?
+              AND inv_id = (
+                  SELECT MAX(latest.inv_id)
+                  FROM payments AS latest
+                  WHERE latest.user_id = pending.user_id
+                    AND latest.status = 'pending'
+              )
+            """,
+            (deadline,),
+        )
+        return list(await cursor.fetchall())
+
+
+async def mark_payment_reminded(inv_id: int) -> None:
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("UPDATE payments SET reminded = 1 WHERE inv_id = ?", (inv_id,))
+        await db.commit()
+
+
 async def cancel_vip_subscription(user_id: int):
     """
     Отменяет VIP подписку.
@@ -157,7 +269,7 @@ async def cancel_vip_subscription(user_id: int):
         await db.execute(
             """
             UPDATE users 
-            SET is_vip = 0, expires_at = NULL 
+            SET is_vip = 0, expires_at = NULL, access_status = NULL
             WHERE user_id = ?
             """,
             (user_id,)

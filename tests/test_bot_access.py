@@ -157,8 +157,10 @@ class TitanFlowTests(unittest.IsolatedAsyncioTestCase):
                 "TITAN_ACCESS_TTL_HOURS",
                 "TITAN_DEMO_URL",
                 "TITAN_DEMO_PASSWORD",
-                "TITAN_PAY_CARD",
-                "TITAN_PAY_SBP",
+                "ROBOKASSA_MERCHANT_LOGIN",
+                "ROBOKASSA_PASSWORD1",
+                "ROBOKASSA_PASSWORD2",
+                "ROBOKASSA_TEST",
             )
         }
         os.environ["TITAN_TRACKER_URL"] = "https://titan.example/app"
@@ -166,8 +168,10 @@ class TitanFlowTests(unittest.IsolatedAsyncioTestCase):
         os.environ["TITAN_ACCESS_TTL_HOURS"] = "12"
         os.environ["TITAN_DEMO_URL"] = ""
         os.environ["TITAN_DEMO_PASSWORD"] = ""
-        os.environ["TITAN_PAY_CARD"] = ""
-        os.environ["TITAN_PAY_SBP"] = ""
+        os.environ["ROBOKASSA_MERCHANT_LOGIN"] = ""
+        os.environ["ROBOKASSA_PASSWORD1"] = ""
+        os.environ["ROBOKASSA_PASSWORD2"] = ""
+        os.environ["ROBOKASSA_TEST"] = "0"
 
     async def asyncTearDown(self):
         db.DB_NAME = self._previous
@@ -334,18 +338,115 @@ class TitanFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(labels, [PAY_BUTTON, BACK_BUTTON])
         self.assertEqual(len(message.answers[0][1].keyboard), 1)
 
-        os.environ["TITAN_PAY_CARD"] = ""
-        os.environ["TITAN_PAY_SBP"] = ""
         pay = FakeMessage(FakeUser(24, "guest"))
         pay.text = PAY_BUTTON
         await pay_button(pay)
         paid = pay.answers[0][0]
         self.assertIn("15 000 ₽", paid)
+        self.assertIn("ROBOKASSA_MERCHANT_LOGIN", paid)
+        self.assertNotIn("auth.robokassa.ru", paid)
         self.assertNotIn("https://titan.example", paid)
-        self.assertNotIn("uid=", paid)
         from subscription_check import check_subscription
 
         self.assertFalse(await check_subscription(24))
+
+    async def test_checkout_opens_robokassa_and_result_grants_password(self):
+        from urllib.parse import parse_qs, urlsplit
+
+        from handlers.club import pay_button, tariffs_button
+        from keyboards import GO_PAY_BUTTON, HOME_BUTTON
+        from services.payment_flow import accept_robokassa_result
+        from services.robokassa import OUT_SUM, result_signature
+
+        os.environ["ROBOKASSA_MERCHANT_LOGIN"] = "titan-shop"
+        os.environ["ROBOKASSA_PASSWORD1"] = "pass-one"
+        os.environ["ROBOKASSA_PASSWORD2"] = "pass-two"
+        pay = FakeMessage(FakeUser(27, "buyer"))
+        await pay_button(pay)
+        self.assertIn("После оплаты доступ придёт", pay.answers[0][0])
+        buttons = pay.answers[0][1].inline_keyboard[0]
+        self.assertEqual(buttons[0].text, GO_PAY_BUTTON)
+        self.assertIn("auth.robokassa.ru", buttons[0].url)
+        self.assertEqual(buttons[1].callback_data, "pay_back")
+        query = parse_qs(urlsplit(buttons[0].url).query)
+        inv = query["InvId"][0]
+        self.assertEqual(query["OutSum"], [OUT_SUM])
+        self.assertEqual(query["Shp_user"], ["27"])
+
+        params = {
+            "OutSum": OUT_SUM,
+            "InvId": inv,
+            "Shp_user": "27",
+            "SignatureValue": result_signature(OUT_SUM, inv, {"Shp_user": "27"}),
+        }
+        bad = dict(params, SignatureValue="0" * 32)
+        self.assertIsNone(await accept_robokassa_result(bad))
+        wrong_sum = dict(
+            params,
+            OutSum="100.00",
+            SignatureValue=result_signature("100.00", inv, {"Shp_user": "27"}),
+        )
+        self.assertIsNone(await accept_robokassa_result(wrong_sum))
+        mismatch = dict(
+            params,
+            Shp_user="1",
+            SignatureValue=result_signature(OUT_SUM, inv, {"Shp_user": "1"}),
+        )
+        self.assertIsNone(await accept_robokassa_result(mismatch))
+
+        outcome = await accept_robokassa_result(params)
+        self.assertTrue(outcome["needs_send"])
+        self.assertTrue(outcome["password"].startswith("Titan-"))
+        self.assertEqual(len(outcome["password"]), 12)
+        user = await db.get_user(27)
+        self.assertEqual(user["access_status"], "активен")
+        self.assertEqual(user["access_password"], outcome["password"])
+        self.assertIsNone(user["expires_at"])
+        again = await accept_robokassa_result(params)
+        self.assertEqual(again["password"], outcome["password"])
+
+        again_view = FakeMessage(FakeUser(27, "buyer"))
+        await tariffs_button(again_view)
+        text = again_view.answers[0][0]
+        self.assertIn("У тебя уже есть доступ", text)
+        self.assertIn(outcome["password"], text)
+        self.assertIn("https://titan.example/app", text)
+        labels = [button.text for row in again_view.answers[0][1].keyboard for button in row]
+        self.assertEqual(labels, [HOME_BUTTON])
+
+    async def test_unpaid_checkout_is_reminded_once_after_30_minutes(self):
+        import aiosqlite
+
+        from handlers.club import watch_unpaid
+
+        os.environ["ROBOKASSA_MERCHANT_LOGIN"] = "titan-shop"
+        os.environ["ROBOKASSA_PASSWORD1"] = "pass-one"
+        os.environ["ROBOKASSA_PASSWORD2"] = "pass-two"
+        inv_id = await db.create_payment(28)
+        recent = await db.create_payment(29)
+        past = (datetime.now() - timedelta(minutes=31)).isoformat()
+        async with aiosqlite.connect(db.DB_NAME) as connection:
+            await connection.execute(
+                "UPDATE payments SET created_at = ? WHERE inv_id = ?",
+                (past, inv_id),
+            )
+            await connection.commit()
+
+        class FakeBot:
+            def __init__(self):
+                self.sent = []
+
+            async def send_message(self, chat_id, text, reply_markup=None):
+                self.sent.append((chat_id, text, reply_markup))
+
+        bot = FakeBot()
+        await watch_unpaid(bot)
+        await watch_unpaid(bot)
+        self.assertEqual([item[0] for item in bot.sent], [28])
+        self.assertIn("платёж не завершён", bot.sent[0][1])
+        labels = [button.text for row in bot.sent[0][2].keyboard for button in row]
+        self.assertEqual(labels, ["💳 Оплатить 15 000 ₽"])
+        self.assertNotEqual(recent, inv_id)
 
     async def test_contact_lists_nine_exchanges_and_developer_link(self):
         from handlers.club import EXCHANGES, contact_button, contact_text, developer_button
