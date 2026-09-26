@@ -13,7 +13,7 @@ from config import (
     titan_demo_password,
     titan_demo_url,
     titan_pay_card,
-    titan_pay_crypto,
+    titan_pay_sbp,
 )
 from db import (
     cancel_vip_subscription,
@@ -112,8 +112,8 @@ def tariffs_text() -> str:
         "Дашборд, скринер спредов, ставки фандинга —\n"
         "все 9 бирж в одном окне.\n"
         "Оплата:\n"
-        "₿ Криптовалюта\n"
-        "💳 Карта / перевод\n"
+        "💳 Банковская карта\n"
+        "📲 СБП — перевод по QR или ссылке\n"
         "После оплаты бот автоматически сгенерирует\n"
         "пароль и выдаст ссылку на терминал\n"
         "в течение 1 минуты.\n"
@@ -124,21 +124,21 @@ def tariffs_text() -> str:
 
 
 def pay_text() -> str:
-    crypto = titan_pay_crypto()
     card = titan_pay_card()
+    sbp = titan_pay_sbp()
     lines = [
         "Оплата 15 000 ₽. Один платёж — бессрочный доступ.",
         "",
     ]
-    if crypto:
-        lines.append(f"₿ Криптовалюта: {crypto}")
-    else:
-        lines.append("₿ Криптовалюта")
     if card:
-        lines.append(f"💳 Карта / перевод: {card}")
+        lines.append(f"💳 Банковская карта: {card}")
     else:
-        lines.append("💳 Карта / перевод")
-    if not crypto and not card:
+        lines.append("💳 Банковская карта")
+    if sbp:
+        lines.append(f"📲 СБП — перевод по QR или ссылке: {sbp}")
+    else:
+        lines.append("📲 СБП — перевод по QR или ссылке")
+    if not card and not sbp:
         lines.append("")
         lines.append(admin_contact())
     lines.append("")

@@ -29,12 +29,12 @@ def titan_demo_password() -> str:
     return os.getenv("TITAN_DEMO_PASSWORD", "").strip()
 
 
-def titan_pay_crypto() -> str:
-    return os.getenv("TITAN_PAY_CRYPTO", "").strip()
-
-
 def titan_pay_card() -> str:
     return os.getenv("TITAN_PAY_CARD", "").strip()
+
+
+def titan_pay_sbp() -> str:
+    return os.getenv("TITAN_PAY_SBP", "").strip()
 
 
 def titan_access_secret() -> str:

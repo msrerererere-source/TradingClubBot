@@ -157,8 +157,8 @@ class TitanFlowTests(unittest.IsolatedAsyncioTestCase):
                 "TITAN_ACCESS_TTL_HOURS",
                 "TITAN_DEMO_URL",
                 "TITAN_DEMO_PASSWORD",
-                "TITAN_PAY_CRYPTO",
                 "TITAN_PAY_CARD",
+                "TITAN_PAY_SBP",
             )
         }
         os.environ["TITAN_TRACKER_URL"] = "https://titan.example/app"
@@ -166,8 +166,8 @@ class TitanFlowTests(unittest.IsolatedAsyncioTestCase):
         os.environ["TITAN_ACCESS_TTL_HOURS"] = "12"
         os.environ["TITAN_DEMO_URL"] = ""
         os.environ["TITAN_DEMO_PASSWORD"] = ""
-        os.environ["TITAN_PAY_CRYPTO"] = ""
         os.environ["TITAN_PAY_CARD"] = ""
+        os.environ["TITAN_PAY_SBP"] = ""
 
     async def asyncTearDown(self):
         db.DB_NAME = self._previous
@@ -323,6 +323,9 @@ class TitanFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(message.answers[0][0], tariffs_text())
         text = message.answers[0][0]
         self.assertIn("15 000 ₽", text)
+        self.assertIn("Банковская карта", text)
+        self.assertIn("СБП", text)
+        self.assertNotIn("Криптовалюта", text)
         self.assertIn("единоразовый доступ", text)
         self.assertIn("бессрочный доступ", text)
         for banned in ("3 000", "7 500", "25 000", "подписк"):
@@ -331,8 +334,8 @@ class TitanFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(labels, [PAY_BUTTON, BACK_BUTTON])
         self.assertEqual(len(message.answers[0][1].keyboard), 1)
 
-        os.environ["TITAN_PAY_CRYPTO"] = ""
         os.environ["TITAN_PAY_CARD"] = ""
+        os.environ["TITAN_PAY_SBP"] = ""
         pay = FakeMessage(FakeUser(24, "guest"))
         pay.text = PAY_BUTTON
         await pay_button(pay)
