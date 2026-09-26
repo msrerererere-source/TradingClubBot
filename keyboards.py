@@ -8,6 +8,8 @@ DEMO_BUTTON = "🔓 Демо-доступ"
 TARIFFS_BUTTON = "💳 Тарифы"
 CONTACT_BUTTON = "📞 Связаться"
 MENU_BUTTON = "◀️ Главное меню"
+TRY_BUTTON = "🔓 Хочу попробовать"
+BACK_BUTTON = "⬅️ Назад"
 
 # Три варианта подписки. Названия и цены приходят отдельно, пока список пуст.
 TARIFF_OPTIONS: list[str] = []
@@ -20,6 +22,14 @@ def get_main_keyboard():
     builder.button(text=TARIFFS_BUTTON)
     builder.button(text=CONTACT_BUTTON)
     builder.adjust(1)
+    return builder.as_markup(resize_keyboard=True)
+
+
+def get_about_keyboard():
+    builder = ReplyKeyboardBuilder()
+    builder.button(text=TRY_BUTTON)
+    builder.button(text=BACK_BUTTON)
+    builder.adjust(2)
     return builder.as_markup(resize_keyboard=True)
 
 

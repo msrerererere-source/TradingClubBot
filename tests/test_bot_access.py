@@ -185,20 +185,46 @@ class TitanFlowTests(unittest.IsolatedAsyncioTestCase):
         labels = [button.text for row in message.answers[0][1].keyboard for button in row]
         self.assertEqual(labels, [ABOUT_BUTTON, DEMO_BUTTON, TARIFFS_BUTTON, CONTACT_BUTTON])
 
-    async def test_about_sends_one_dashboard_photo(self):
-        from handlers.club import about_button
+    async def test_about_sends_three_screens_and_two_buttons(self):
+        from handlers.club import about_button, about_text
+        from keyboards import BACK_BUTTON, TRY_BUTTON
 
         message = FakeMessage(FakeUser(15, "guest"))
         await about_button(message)
-        text = "\n".join(item[0] for item in message.answers)
-        self.assertIn("9 бирж", text)
-        self.assertIn("скринер", text)
-        self.assertIn("фандинг", text)
-        self.assertNotIn("15 000", text)
-        self.assertEqual(len(message.photos), 1)
-        self.assertEqual(message.photos[0]["caption"], "Дашборд")
-        self.assertTrue(str(message.photos[0]["photo"].path).endswith("02-dashboard.jpg"))
-        self.assertFalse(hasattr(message, "gallery"))
+        self.assertEqual(message.answers[0][0], about_text())
+        self.assertIn("14 секунд", message.answers[0][0])
+        labels = [button.text for row in message.answers[0][1].keyboard for button in row]
+        self.assertEqual(labels, [TRY_BUTTON, BACK_BUTTON])
+        self.assertEqual(len(message.answers[0][1].keyboard), 1)
+        self.assertEqual(
+            [item.caption for item in message.gallery],
+            ["Скриншот дашборда", "Скриншот скринера", "Скриншот фандинга"],
+        )
+        names = [str(item.media.path) for item in message.gallery]
+        self.assertTrue(names[0].endswith("02-dashboard.jpg"))
+        self.assertTrue(names[1].endswith("03-screener.jpg"))
+        self.assertTrue(names[2].endswith("04-funding.jpg"))
+        self.assertEqual(message.photos, [])
+
+    async def test_try_button_opens_demo_and_back_returns_menu(self):
+        from handlers.club import WELCOME, demo_button, main_menu_button
+        from keyboards import ABOUT_BUTTON, BACK_BUTTON, TRY_BUTTON
+
+        message = FakeMessage(FakeUser(26, "guest"))
+        message.text = TRY_BUTTON
+        await demo_button(message)
+        text = message.answers[-1][0]
+        self.assertIn("24 часа", text)
+        self.assertIn("Пароль:", text)
+        labels = [button.text for row in message.answers[-1][1].keyboard for button in row]
+        self.assertEqual(labels, [TRY_BUTTON, BACK_BUTTON])
+
+        back = FakeMessage(FakeUser(26, "guest"))
+        back.text = BACK_BUTTON
+        await main_menu_button(back)
+        self.assertEqual(back.answers[0][0], WELCOME)
+        menu = [button.text for row in back.answers[0][1].keyboard for button in row]
+        self.assertEqual(menu[0], ABOUT_BUTTON)
 
     async def test_guest_does_not_receive_link(self):
         from handlers.club import present_titan

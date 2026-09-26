@@ -4,7 +4,7 @@ from pathlib import Path
 
 from aiogram import F, Router
 from aiogram.filters import Command, CommandObject, CommandStart
-from aiogram.types import CallbackQuery, FSInputFile, Message
+from aiogram.types import CallbackQuery, FSInputFile, InputMediaPhoto, Message
 
 from config import (
     admin_username,
@@ -22,11 +22,14 @@ from db import (
 )
 from keyboards import (
     ABOUT_BUTTON,
+    BACK_BUTTON,
     CONTACT_BUTTON,
     DEMO_BUTTON,
     MENU_BUTTON,
     TARIFF_OPTIONS,
     TARIFFS_BUTTON,
+    TRY_BUTTON,
+    get_about_keyboard,
     get_main_keyboard,
     get_tariffs_keyboard,
     get_vip_action_keyboard,
@@ -39,7 +42,11 @@ router = Router()
 
 DEMO_HOURS = 24
 DEMO_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-DASHBOARD_SHOT = "02-dashboard.jpg"
+ABOUT_SHOTS = (
+    ("02-dashboard.jpg", "Скриншот дашборда"),
+    ("03-screener.jpg", "Скриншот скринера"),
+    ("04-funding.jpg", "Скриншот фандинга"),
+)
 
 WELCOME = (
     "👋 Привет! Я — бот Титан Трекера.\n"
@@ -64,10 +71,17 @@ def admin_contact() -> str:
 
 def about_text() -> str:
     return (
-        "Титан Трекер собирает 9 бирж в одном окне.\n"
-        "Дашборд показывает общую картину, скринер ищет спред цены, "
-        "фандинг — ставки финансирования.\n"
-        "Данные идут в реальном времени. Терминал сделки сам не открывает."
+        "Титан Трекер — веб-терминал межбиржевого арбитража.\n"
+        "Открывается по ссылке в браузере. В одном окне\n"
+        "держит цены и ставки финансирования с 9 бирж.\n"
+        "Три контура:\n"
+        "• Дашборд — общая рыночная картина\n"
+        "• Скринер — ищет пары с достаточным спредом\n"
+        "• Фандинг — ищет разницу ставок по контрактам\n"
+        "Обновление в реальном времени, счётчик свежести\n"
+        "на экране — 14 секунд.\n"
+        "Заявки на биржи не отправляет. Терминал показывает\n"
+        "возможность — решение за тобой."
     )
 
 
@@ -76,7 +90,7 @@ def contact_text() -> str:
         admin_contact()
         + "\n\n"
         "Коротко по кнопкам:\n"
-        "• 📊 Что это такое — описание и один скриншот дашборда.\n"
+        "• 📊 Что это такое — описание и скриншоты дашборда, скринера и фандинга.\n"
         "• 🔓 Демо-доступ — ссылка и пароль на 24 часа.\n"
         "• 💳 Тарифы — три варианта подписки.\n"
         "• 📞 Связаться — написать администратору."
@@ -94,8 +108,20 @@ def tariffs_text() -> str:
     return f"Три варианта подписки:\n{lines}\n\n{admin_contact()}"
 
 
-def dashboard_screenshot() -> Path:
-    return Path(__file__).resolve().parent.parent / "images" / "titan" / DASHBOARD_SHOT
+def about_gallery() -> list[InputMediaPhoto]:
+    folder = Path(__file__).resolve().parent.parent / "images" / "titan"
+    media = []
+    for name, caption in ABOUT_SHOTS:
+        path = folder / name
+        if path.is_file():
+            media.append(InputMediaPhoto(media=FSInputFile(path), caption=caption))
+    return media
+
+
+def _keyboard_after_demo(message: Message):
+    if getattr(message, "text", None) == TRY_BUTTON:
+        return get_about_keyboard()
+    return get_main_keyboard()
 
 
 def _parse_positive_int(value: str) -> int:
@@ -196,13 +222,18 @@ async def cmd_revoke(message: Message, command: CommandObject) -> None:
 
 @router.message(F.text == ABOUT_BUTTON)
 async def about_button(message: Message) -> None:
-    await message.answer(about_text(), reply_markup=get_main_keyboard())
-    path = dashboard_screenshot()
-    if path.is_file():
-        await message.answer_photo(FSInputFile(path), caption="Дашборд")
+    await message.answer(about_text(), reply_markup=get_about_keyboard())
+    media = about_gallery()
+    if len(media) >= 2:
+        sender = getattr(message, "answer_media_group", None)
+        if sender is not None:
+            await sender(media=media)
+            return
+    for item in media:
+        await message.answer_photo(item.media, caption=item.caption)
 
 
-@router.message(F.text == DEMO_BUTTON)
+@router.message(F.text.in_({DEMO_BUTTON, TRY_BUTTON}))
 async def demo_button(message: Message) -> None:
     user = message.from_user
     await upsert_user(user.id, user.username)
@@ -214,7 +245,7 @@ async def demo_button(message: Message) -> None:
     if not url:
         await message.answer(
             "Демо пока не открыто: в .env нет TITAN_DEMO_URL или TITAN_TRACKER_URL.",
-            reply_markup=get_main_keyboard(),
+            reply_markup=_keyboard_after_demo(message),
         )
         return
     password, until = await issue_demo(user.id)
@@ -223,7 +254,7 @@ async def demo_button(message: Message) -> None:
         f"Ссылка: {url}\n"
         f"Пароль: {password}\n"
         f"Действует до: {_format_until(until)}",
-        reply_markup=get_main_keyboard(),
+        reply_markup=_keyboard_after_demo(message),
     )
 
 
@@ -257,7 +288,7 @@ async def cancel_button(message: Message) -> None:
     )
 
 
-@router.message(F.text == MENU_BUTTON)
+@router.message(F.text.in_({MENU_BUTTON, BACK_BUTTON}))
 async def main_menu_button(message: Message) -> None:
     await message.answer(WELCOME, reply_markup=get_main_keyboard())
 
