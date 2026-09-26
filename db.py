@@ -13,9 +13,17 @@ async def init_db():
                 username TEXT,
                 is_vip INTEGER DEFAULT 0,
                 expires_at TEXT,
-                joined_at TEXT DEFAULT CURRENT_TIMESTAMP
+                joined_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                demo_password TEXT,
+                demo_until TEXT
             )
         """)
+        cursor = await db.execute("PRAGMA table_info(users)")
+        columns = {row[1] for row in await cursor.fetchall()}
+        if "demo_password" not in columns:
+            await db.execute("ALTER TABLE users ADD COLUMN demo_password TEXT")
+        if "demo_until" not in columns:
+            await db.execute("ALTER TABLE users ADD COLUMN demo_until TEXT")
         await db.commit()
 
 async def get_user(user_id: int) -> Optional[aiosqlite.Row]:
@@ -92,6 +100,22 @@ async def set_vip_subscription(user_id: int, days: int = 30):
         )
         await db.commit()
     print(f"✅ VIP подписка активирована для {user_id} на {days} дней. Окончание: {expires_at_str}")
+
+async def set_demo_access(user_id: int, password: str, until: str) -> None:
+    """Запоминает пароль демо и момент, когда 24 часа заканчиваются."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            """
+            INSERT INTO users (user_id, demo_password, demo_until)
+            VALUES (?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                demo_password = excluded.demo_password,
+                demo_until = excluded.demo_until
+            """,
+            (user_id, password, until),
+        )
+        await db.commit()
+
 
 async def cancel_vip_subscription(user_id: int):
     """

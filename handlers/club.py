@@ -1,27 +1,53 @@
+import secrets
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from aiogram import F, Router
 from aiogram.filters import Command, CommandObject, CommandStart
-from aiogram.types import CallbackQuery, FSInputFile, InputMediaPhoto, Message
+from aiogram.types import CallbackQuery, FSInputFile, Message
 
-from config import admin_username, bot_display_name, titan_access_ttl_hours
+from config import (
+    admin_username,
+    titan_access_ttl_hours,
+    titan_demo_password,
+    titan_demo_url,
+)
 from db import (
     cancel_vip_subscription,
     check_vip_status,
     get_user,
+    set_demo_access,
     set_vip_subscription,
     upsert_user,
 )
 from keyboards import (
+    ABOUT_BUTTON,
+    CONTACT_BUTTON,
+    DEMO_BUTTON,
+    MENU_BUTTON,
+    TARIFF_OPTIONS,
+    TARIFFS_BUTTON,
     get_main_keyboard,
+    get_tariffs_keyboard,
     get_vip_action_keyboard,
     titan_open_keyboard,
 )
 from services.titan_access import build_titan_link
 from subscription_check import check_subscription
-from theory_blocks import theory_blocks
 
 router = Router()
+
+DEMO_HOURS = 24
+DEMO_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+DASHBOARD_SHOT = "02-dashboard.jpg"
+
+WELCOME = (
+    "👋 Привет! Я — бот Титан Трекера.\n"
+    "Веб-терминал для межбиржевого арбитража: 9 бирж,\n"
+    "реальное время, скринер спредов и ставок фандинга\n"
+    "в одном окне.\n"
+    "Выбери, что нужно:"
+)
 
 
 def is_admin(username: str | None) -> bool:
@@ -32,8 +58,44 @@ def is_admin(username: str | None) -> bool:
 def admin_contact() -> str:
     admin = admin_username()
     if not admin:
-        return "Администратор клуба пока не указан."
+        return "Администратор пока не указан."
     return f"Администратор: https://t.me/{admin}"
+
+
+def about_text() -> str:
+    return (
+        "Титан Трекер собирает 9 бирж в одном окне.\n"
+        "Дашборд показывает общую картину, скринер ищет спред цены, "
+        "фандинг — ставки финансирования.\n"
+        "Данные идут в реальном времени. Терминал сделки сам не открывает."
+    )
+
+
+def contact_text() -> str:
+    return (
+        admin_contact()
+        + "\n\n"
+        "Коротко по кнопкам:\n"
+        "• 📊 Что это такое — описание и один скриншот дашборда.\n"
+        "• 🔓 Демо-доступ — ссылка и пароль на 24 часа.\n"
+        "• 💳 Тарифы — три варианта подписки.\n"
+        "• 📞 Связаться — написать администратору."
+    )
+
+
+def tariffs_text() -> str:
+    if not TARIFF_OPTIONS:
+        return (
+            "Тарифы — три варианта подписки.\n"
+            "Названия и цены ещё не внесены в бота.\n"
+            "После оплаты администратор открывает доступ."
+        )
+    lines = "\n".join(f"• {title}" for title in TARIFF_OPTIONS)
+    return f"Три варианта подписки:\n{lines}\n\n{admin_contact()}"
+
+
+def dashboard_screenshot() -> Path:
+    return Path(__file__).resolve().parent.parent / "images" / "titan" / DASHBOARD_SHOT
 
 
 def _parse_positive_int(value: str) -> int:
@@ -45,28 +107,49 @@ def _parse_positive_int(value: str) -> int:
     return number
 
 
+def _new_demo_password() -> str:
+    shared = titan_demo_password()
+    if shared:
+        return shared
+    return "".join(secrets.choice(DEMO_ALPHABET) for _ in range(6))
+
+
+def _format_until(moment: datetime) -> str:
+    return moment.strftime("%d.%m.%Y %H:%M")
+
+
+async def issue_demo(user_id: int, now: datetime | None = None) -> tuple[str, datetime]:
+    """Возвращает пароль и момент окончания. До истечения пароль тот же."""
+    moment = now or datetime.now()
+    user = await get_user(user_id)
+    if user is not None:
+        stored_until = user["demo_until"]
+        stored_password = user["demo_password"]
+        if stored_until and stored_password:
+            try:
+                until = datetime.fromisoformat(stored_until)
+            except ValueError:
+                until = None
+            if until is not None and until > moment:
+                return stored_password, until
+    password = _new_demo_password()
+    until = moment + timedelta(hours=DEMO_HOURS)
+    await set_demo_access(user_id, password, until.isoformat())
+    return password, until
+
+
 @router.message(CommandStart())
 async def cmd_start(message: Message) -> None:
     user = message.from_user
     await upsert_user(user.id, user.username)
-    admin_help = ""
+    await message.answer(WELCOME, reply_markup=get_main_keyboard())
     if is_admin(user.username):
-        admin_help = (
-            "\n\nКоманды администратора:\n"
-            "/grant 30 — открыть себе VIP на 30 дней\n"
-            "/grant <id> <дни> — открыть VIP участнику\n"
+        await message.answer(
+            "Команды администратора:\n"
+            "/grant 30 — открыть себе доступ на 30 дней\n"
+            "/grant <id> <дни> — открыть доступ участнику\n"
             "/revoke <id> — закрыть доступ"
         )
-    await message.answer(
-        f"Привет. Это {bot_display_name()}.\n\n"
-        "Арбитраж и расхождения ставок финансирования по 9 биржам. "
-        "Внутри разделы «Дашборд», «Скринер» и «Фандинг».\n\n"
-        f"{price_text()}\n\n"
-        "/status — проверить доступ\n"
-        "/titan — открыть Титан Трекер"
-        + admin_help,
-        reply_markup=get_main_keyboard(),
-    )
 
 
 @router.message(Command("status"))
@@ -82,7 +165,7 @@ async def cmd_titan(message: Message) -> None:
 @router.message(Command("grant"))
 async def cmd_grant(message: Message, command: CommandObject) -> None:
     if not is_admin(message.from_user.username):
-        await message.answer("Эту команду выполняет администратор клуба.")
+        await message.answer("Эту команду выполняет администратор.")
         return
     try:
         user_id, days = _grant_target(command.args or "", message.from_user.id)
@@ -92,13 +175,13 @@ async def cmd_grant(message: Message, command: CommandObject) -> None:
     await set_vip_subscription(user_id, days)
     user = await get_user(user_id)
     expires = user["expires_at"] if user else "неизвестно"
-    await message.answer(f"VIP открыт для {user_id} на {days} дн. До: {expires}")
+    await message.answer(f"Доступ открыт для {user_id} на {days} дн. До: {expires}")
 
 
 @router.message(Command("revoke"))
 async def cmd_revoke(message: Message, command: CommandObject) -> None:
     if not is_admin(message.from_user.username):
-        await message.answer("Эту команду выполняет администратор клуба.")
+        await message.answer("Эту команду выполняет администратор.")
         return
     raw = (command.args or "").strip()
     try:
@@ -108,7 +191,50 @@ async def cmd_revoke(message: Message, command: CommandObject) -> None:
         return
     await upsert_user(user_id, None)
     await cancel_vip_subscription(user_id)
-    await message.answer(f"VIP закрыт для {user_id}.")
+    await message.answer(f"Доступ закрыт для {user_id}.")
+
+
+@router.message(F.text == ABOUT_BUTTON)
+async def about_button(message: Message) -> None:
+    await message.answer(about_text(), reply_markup=get_main_keyboard())
+    path = dashboard_screenshot()
+    if path.is_file():
+        await message.answer_photo(FSInputFile(path), caption="Дашборд")
+
+
+@router.message(F.text == DEMO_BUTTON)
+async def demo_button(message: Message) -> None:
+    user = message.from_user
+    await upsert_user(user.id, user.username)
+    if await check_subscription(user.id):
+        await message.answer("Доступ уже открыт. Демо не нужно.")
+        await send_paid_link(message)
+        return
+    url = titan_demo_url()
+    if not url:
+        await message.answer(
+            "Демо пока не открыто: в .env нет TITAN_DEMO_URL или TITAN_TRACKER_URL.",
+            reply_markup=get_main_keyboard(),
+        )
+        return
+    password, until = await issue_demo(user.id)
+    await message.answer(
+        "Демо-доступ на 24 часа.\n\n"
+        f"Ссылка: {url}\n"
+        f"Пароль: {password}\n"
+        f"Действует до: {_format_until(until)}",
+        reply_markup=get_main_keyboard(),
+    )
+
+
+@router.message(F.text == TARIFFS_BUTTON)
+async def tariffs_button(message: Message) -> None:
+    await message.answer(tariffs_text(), reply_markup=get_tariffs_keyboard(TARIFF_OPTIONS))
+
+
+@router.message(F.text.in_({CONTACT_BUTTON, "📞 Связаться с администратором"}))
+async def contact_button(message: Message) -> None:
+    await message.answer(contact_text(), reply_markup=get_main_keyboard())
 
 
 @router.message(F.text == "🛰 Титан Трекер")
@@ -116,82 +242,9 @@ async def titan_button(message: Message) -> None:
     await present_titan(message)
 
 
-@router.message(F.text == "💎 VIP: обучение и разбор сделок")
-async def vip_button(message: Message) -> None:
-    await _send_status(message)
-
-
-@router.message(F.text == "📜 Правила клуба")
-async def rules_button(message: Message) -> None:
-    await message.answer(
-        "Правила клуба\n\n"
-        "1. Титан Трекер — наблюдательный терминал. Он показывает ценовой спред "
-        "и расхождение фандинга, заявки на биржи сам не отправляет.\n"
-        "2. Ссылку на терминал получает участник с активным VIP.\n"
-        "3. Разбор в клубе — это учебный материал, не поручение открыть сделку.\n"
-        "4. Решение о входе, объёме и сроке удержания остаётся за вами.\n\n"
-        + admin_contact(),
-        reply_markup=get_main_keyboard(),
-    )
-
-
-@router.message(F.text == "📅 Расписание сделок")
-async def schedule_button(message: Message) -> None:
-    await message.answer(
-        "Титан Трекер работает постоянно. На его панели стоят часы Токио, Лондона, "
-        "Нью-Йорка и Москвы, чтобы торговая сессия была видна без пересчёта.\n\n"
-        "Разборы клуба назначает администратор и публикует их отдельно.\n\n"
-        + admin_contact(),
-        reply_markup=get_main_keyboard(),
-    )
-
-
-@router.message(F.text == "❓ Помощь")
-async def help_button(message: Message) -> None:
-    await message.answer(
-        "Как пользоваться ботом\n\n"
-        "🛰 Титан Трекер — получить ссылку, если VIP активен.\n"
-        "/status — дата окончания доступа.\n"
-        "/titan — открыть терминал.\n"
-        "◀️ Главное меню — вернуться к основным кнопкам.\n\n"
-        + admin_contact(),
-        reply_markup=get_main_keyboard(),
-    )
-
-
-@router.message(F.text == "📞 Связаться с администратором")
-async def contact_button(message: Message) -> None:
-    await message.answer(admin_contact(), reply_markup=get_main_keyboard())
-
-
-@router.message(F.text == "⚡ Кратко о правилах")
-async def short_rules_button(message: Message) -> None:
-    candles = "\n\n".join(block["text"] for block in theory_blocks.values())
-    await message.answer(
-        "Коротко\n"
-        "• Терминал показывает расхождения и не торгует за вас.\n"
-        "• Ссылка на Титан Трекер живёт, пока действует VIP.\n"
-        "• Риск и размер позиции считаете вы.\n\n"
-        f"Опора по свечам:\n{candles}",
-        reply_markup=get_main_keyboard(),
-    )
-
-
 @router.message(F.text == "✅ Продлить обучение (автопродление)")
 async def renew_button(message: Message) -> None:
-    if is_admin(message.from_user.username):
-        await set_vip_subscription(message.from_user.id, 30)
-        await message.answer(
-            "VIP продлён на 30 дней. Титан Трекер можно открыть сразу.",
-            reply_markup=get_vip_action_keyboard(),
-        )
-        return
-    await message.answer(
-        "Продление подтверждает администратор клуба. "
-        "После подтверждения бот снова выдаст ссылку на Титан Трекер.\n\n"
-        + admin_contact(),
-        reply_markup=get_main_keyboard(),
-    )
+    await tariffs_button(message)
 
 
 @router.message(F.text == "❌ Не продлевать (отключить доступ)")
@@ -199,14 +252,14 @@ async def cancel_button(message: Message) -> None:
     await upsert_user(message.from_user.id, message.from_user.username)
     await cancel_vip_subscription(message.from_user.id)
     await message.answer(
-        "VIP отключён. Ссылка на Титан Трекер для этого аккаунта закрыта.",
+        "Доступ отключён. Ссылка на Титан Трекер для этого аккаунта закрыта.",
         reply_markup=get_main_keyboard(),
     )
 
 
-@router.message(F.text == "◀️ Главное меню")
+@router.message(F.text == MENU_BUTTON)
 async def main_menu_button(message: Message) -> None:
-    await message.answer("Главное меню.", reply_markup=get_main_keyboard())
+    await message.answer(WELCOME, reply_markup=get_main_keyboard())
 
 
 @router.callback_query(F.data == "titan_access")
@@ -251,87 +304,37 @@ async def _send_status(message: Message) -> None:
     else:
         status = await check_vip_status(user.id)
         if status["is_vip"] and status["is_expired"]:
-            text = "Срок доступа истёк. Ссылка на Титан Трекер закрыта."
+            text = "Срок доступа истёк. Ссылка на терминал закрыта."
         else:
-            text = "Доступ ещё не открыт.\n" + price_text()
-        text += "\n\n" + admin_contact()
+            text = "Доступ ещё не открыт."
+        text += "\nДемо — на 24 часа. Тарифы — три варианта подписки.\n\n" + admin_contact()
         markup = get_main_keyboard()
     await message.answer(text, reply_markup=markup)
 
 
-def titan_about_text() -> str:
-    return (
-        "Титан Трекер — терминал межбиржевого арбитража и ставок финансирования.\n\n"
-        "Что делает:\n"
-        "• Собирает 9 бирж в одном окне.\n"
-        "• Дашборд показывает общую картину рынка.\n"
-        "• Скринер находит расхождение цены между биржами.\n"
-        "• Фандинг показывает, где ставки финансирования разошлись.\n"
-        "• Данные идут в реальном времени.\n"
-        "• Часы Токио, Лондона, Нью-Йорка и Москвы показывают торговую сессию.\n"
-        "• Новичку по этим разделам видно, как устроена связка и с чего начать.\n\n"
-        "Чего не делает:\n"
-        "• Не открывает сделки на биржах.\n"
-        "• Не обещает прибыль.\n"
-        "• Объём и решение о входе остаются за человеком.\n\n"
-        f"{price_text()}\n"
-        "Ссылку на терминал бот выдаёт после оплаты."
-    )
-
-
-def price_text() -> str:
-    return "Стоимость: 15 000 ₽.\nОплата один раз. Подписки нет."
-
-
-TITAN_GALLERY = (
-    ("01-main.jpg", "Главная. Что делает терминал и как устроены разделы."),
-    ("02-dashboard.jpg", "Дашборд. Общая картина рынка и данные в реальном времени."),
-    ("03-screener.jpg", "Скринер. Расхождение цены между биржами."),
-    ("04-funding.jpg", "Фандинг. Где ставки финансирования разошлись."),
-)
-
-
-def titan_gallery() -> list[InputMediaPhoto]:
-    folder = Path(__file__).resolve().parent.parent / "images" / "titan"
-    media = []
-    for name, caption in TITAN_GALLERY:
-        path = folder / name
-        if path.is_file():
-            media.append(InputMediaPhoto(media=FSInputFile(path), caption=caption))
-    return media
-
-
-async def send_titan_gallery(message: Message) -> None:
-    media = titan_gallery()
-    if not media:
-        return
-    sender = getattr(message, "answer_media_group", None)
-    if sender is None:
-        return
-    await sender(media=media)
-
-
 async def present_titan(message: Message) -> None:
-    await message.answer(titan_about_text())
-    await send_titan_gallery(message)
     user = message.from_user
     await upsert_user(user.id, user.username)
     if not await check_subscription(user.id):
         status = await check_vip_status(user.id)
         if status["is_vip"] and status["is_expired"]:
-            reason = "Срок доступа истёк, поэтому ссылка на Титан Трекер закрыта."
+            reason = "Срок доступа истёк. Ссылка на терминал закрыта."
         else:
-            reason = (
-                "Титан Трекер стоит 15 000 ₽. Оплата один раз, подписки нет. "
-                "Ссылка на терминал открывается после оплаты."
-            )
-        await message.answer(reason + "\n\n" + admin_contact(), reply_markup=get_main_keyboard())
+            reason = "Доступ ещё не открыт."
+        await message.answer(
+            reason + "\nМожно взять демо на 24 часа или открыть тарифы.\n\n" + admin_contact(),
+            reply_markup=get_main_keyboard(),
+        )
         return
+    await send_paid_link(message)
 
+
+async def send_paid_link(message: Message) -> None:
+    user = message.from_user
     built = build_titan_link(user.id)
     if built is None:
         await message.answer(
-            "VIP-доступ активен. Адрес Титан Трекера ещё не задан: "
+            "Доступ активен. Адрес Титан Трекера ещё не задан: "
             "в .env нужна переменная TITAN_TRACKER_URL.\n\n" + admin_contact(),
             reply_markup=get_vip_action_keyboard(),
         )
@@ -341,7 +344,7 @@ async def present_titan(message: Message) -> None:
     record = await get_user(user.id)
     expires = ""
     if record and record["expires_at"]:
-        expires = f"\nVIP до: {record['expires_at']}"
+        expires = f"\nДо: {record['expires_at']}"
     if personal:
         freshness = f"Персональная ссылка действует {titan_access_ttl_hours()} ч."
     else:

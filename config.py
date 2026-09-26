@@ -21,6 +21,14 @@ def titan_tracker_url() -> str:
     return os.getenv("TITAN_TRACKER_URL", "").strip()
 
 
+def titan_demo_url() -> str:
+    return os.getenv("TITAN_DEMO_URL", "").strip() or titan_tracker_url()
+
+
+def titan_demo_password() -> str:
+    return os.getenv("TITAN_DEMO_PASSWORD", "").strip()
+
+
 def titan_access_secret() -> str:
     return os.getenv("TITAN_ACCESS_SECRET", "").strip()
 

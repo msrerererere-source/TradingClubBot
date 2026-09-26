@@ -3,18 +3,38 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 
 from config import titan_webapp_enabled
 
+ABOUT_BUTTON = "📊 Что это такое"
+DEMO_BUTTON = "🔓 Демо-доступ"
+TARIFFS_BUTTON = "💳 Тарифы"
+CONTACT_BUTTON = "📞 Связаться"
+MENU_BUTTON = "◀️ Главное меню"
+
+# Три варианта подписки. Названия и цены приходят отдельно, пока список пуст.
+TARIFF_OPTIONS: list[str] = []
+
 
 def get_main_keyboard():
     builder = ReplyKeyboardBuilder()
-    builder.button(text="🛰 Титан Трекер")
-    builder.button(text="📞 Связаться с администратором")
+    builder.button(text=ABOUT_BUTTON)
+    builder.button(text=DEMO_BUTTON)
+    builder.button(text=TARIFFS_BUTTON)
+    builder.button(text=CONTACT_BUTTON)
     builder.adjust(1)
     return builder.as_markup(resize_keyboard=True)
 
 
 def get_vip_action_keyboard():
     builder = ReplyKeyboardBuilder()
-    builder.button(text="◀️ Главное меню")
+    builder.button(text=MENU_BUTTON)
+    builder.adjust(1)
+    return builder.as_markup(resize_keyboard=True)
+
+
+def get_tariffs_keyboard(options: list[str]):
+    builder = ReplyKeyboardBuilder()
+    for title in options:
+        builder.button(text=title)
+    builder.button(text=MENU_BUTTON)
     builder.adjust(1)
     return builder.as_markup(resize_keyboard=True)
 
