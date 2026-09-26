@@ -5,7 +5,14 @@ from pathlib import Path
 
 from aiogram import F, Router
 from aiogram.filters import Command, CommandObject, CommandStart
-from aiogram.types import CallbackQuery, FSInputFile, InputMediaPhoto, Message
+from aiogram.types import (
+    CallbackQuery,
+    FSInputFile,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InputMediaPhoto,
+    Message,
+)
 
 from config import (
     admin_username,
@@ -34,7 +41,9 @@ from keyboards import (
     PAY_BUTTON,
     TARIFFS_BUTTON,
     TRY_BUTTON,
+    WRITE_BUTTON,
     get_about_keyboard,
+    get_contact_keyboard,
     get_demo_keyboard,
     get_main_keyboard,
     get_tariffs_keyboard,
@@ -91,15 +100,50 @@ def about_text() -> str:
     )
 
 
+EXCHANGES = (
+    "Binance",
+    "Bybit",
+    "OKX",
+    "Bitget",
+    "Gate.io",
+    "KuCoin",
+    "MEXC",
+    "BingX",
+    "HTX",
+)
+
+
 def contact_text() -> str:
+    exchanges = "\n".join(f"• {name}" for name in EXCHANGES)
     return (
-        admin_contact()
-        + "\n\n"
-        "Коротко по кнопкам:\n"
-        "• 📊 Что это такое — описание и скриншоты дашборда, скринера и фандинга.\n"
-        "• 🔓 Демо-доступ — ссылка и пароль на 24 часа.\n"
-        "• 💳 Тарифы — Dashboard, единоразово 15 000 ₽.\n"
-        "• 📞 Связаться — написать администратору."
+        "Ответы на частые вопросы:\n"
+        "❓ Это бот-автомат?\n"
+        "Нет. Терминал показывает данные,\n"
+        "заявки не отправляет.\n"
+        "❓ Какие биржи подключены?\n"
+        f"{exchanges}\n"
+        "❓ Нужно ли что-то устанавливать?\n"
+        "Нет. Открывается по ссылке в браузере.\n"
+        "❓ Данные в реальном времени?\n"
+        "Да. Счётчик свежести на экране показывает,\n"
+        "сколько секунд назад обновился снимок рынка.\n"
+        "❓ Что если биржа поменяет API?\n"
+        "Терминал автоматически уведомит разработчика.\n"
+        "Восстановление — обычно в течение часа.\n"
+        "Хочешь задать вопрос лично?"
+    )
+
+
+def developer_url() -> str | None:
+    admin = admin_username()
+    if not admin:
+        return None
+    return f"https://t.me/{admin}"
+
+
+def developer_keyboard(url: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text=WRITE_BUTTON, url=url)]]
     )
 
 
@@ -325,7 +369,19 @@ async def pay_button(message: Message) -> None:
 
 @router.message(F.text.in_({CONTACT_BUTTON, "📞 Связаться с администратором"}))
 async def contact_button(message: Message) -> None:
-    await message.answer(contact_text(), reply_markup=get_main_keyboard())
+    await message.answer(contact_text(), reply_markup=get_contact_keyboard())
+
+
+@router.message(F.text == WRITE_BUTTON)
+async def developer_button(message: Message) -> None:
+    url = developer_url()
+    if not url:
+        await message.answer(
+            "Контакт разработчика пока не указан.",
+            reply_markup=get_contact_keyboard(),
+        )
+        return
+    await message.answer(f"Написать разработчику: {url}", reply_markup=developer_keyboard(url))
 
 
 @router.message(F.text == "🛰 Титан Трекер")

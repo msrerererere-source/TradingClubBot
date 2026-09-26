@@ -11,6 +11,7 @@ MENU_BUTTON = "◀️ Главное меню"
 TRY_BUTTON = "🔓 Хочу попробовать"
 BACK_BUTTON = "⬅️ Назад"
 PAY_BUTTON = "💳 Оплатить 15 000 ₽"
+WRITE_BUTTON = "💬 Написать разработчику"
 
 
 def get_main_keyboard():
@@ -36,6 +37,14 @@ def get_demo_keyboard():
     builder.button(text=TARIFFS_BUTTON)
     builder.button(text=BACK_BUTTON)
     builder.adjust(2)
+    return builder.as_markup(resize_keyboard=True)
+
+
+def get_contact_keyboard():
+    builder = ReplyKeyboardBuilder()
+    builder.button(text=WRITE_BUTTON)
+    builder.button(text=BACK_BUTTON)
+    builder.adjust(1)
     return builder.as_markup(resize_keyboard=True)
 
 

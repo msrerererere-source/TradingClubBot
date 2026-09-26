@@ -347,17 +347,28 @@ class TitanFlowTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(await check_subscription(24))
 
-    async def test_contact_has_admin_and_faq(self):
-        from handlers.club import contact_button
+    async def test_contact_lists_nine_exchanges_and_developer_link(self):
+        from handlers.club import EXCHANGES, contact_button, contact_text, developer_button
+        from keyboards import BACK_BUTTON, WRITE_BUTTON
 
         message = FakeMessage(FakeUser(25, "guest"))
-        message.text = "📞 Связаться с администратором"
         await contact_button(message)
+        self.assertEqual(message.answers[0][0], contact_text())
         text = message.answers[0][0]
-        self.assertIn("https://t.me/", text)
-        self.assertIn("Что это такое", text)
-        self.assertIn("Демо-доступ", text)
-        self.assertIn("Тарифы", text)
+        self.assertEqual(len(EXCHANGES), 9)
+        for name in EXCHANGES:
+            self.assertIn(name, text)
+        self.assertIn("Это бот-автомат?", text)
+        self.assertIn("заявки не отправляет", text)
+        labels = [button.text for row in message.answers[0][1].keyboard for button in row]
+        self.assertEqual(labels, [WRITE_BUTTON, BACK_BUTTON])
+
+        writer = FakeMessage(FakeUser(25, "guest"))
+        writer.text = WRITE_BUTTON
+        await developer_button(writer)
+        self.assertIn("https://t.me/", writer.answers[0][0])
+        self.assertEqual(writer.answers[0][1].inline_keyboard[0][0].text, WRITE_BUTTON)
+        self.assertTrue(writer.answers[0][1].inline_keyboard[0][0].url.startswith("https://t.me/"))
 
     async def test_expired_demo_notifies_once(self):
         from handlers.club import watch_demo_expiry
