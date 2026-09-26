@@ -14,7 +14,7 @@ def bot_token() -> str:
 
 
 def admin_username() -> str:
-    return os.getenv("ADMIN_USERNAME", "natalia_trading").strip().lstrip("@")
+    return os.getenv("ADMIN_USERNAME", "Natilev500").strip().lstrip("@")
 
 
 def titan_tracker_url() -> str:

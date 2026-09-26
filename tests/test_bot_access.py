@@ -467,9 +467,9 @@ class TitanFlowTests(unittest.IsolatedAsyncioTestCase):
         writer = FakeMessage(FakeUser(25, "guest"))
         writer.text = WRITE_BUTTON
         await developer_button(writer)
-        self.assertIn("https://t.me/", writer.answers[0][0])
+        self.assertIn("https://t.me/Natilev500", writer.answers[0][0])
         self.assertEqual(writer.answers[0][1].inline_keyboard[0][0].text, WRITE_BUTTON)
-        self.assertTrue(writer.answers[0][1].inline_keyboard[0][0].url.startswith("https://t.me/"))
+        self.assertEqual(writer.answers[0][1].inline_keyboard[0][0].url, "https://t.me/Natilev500")
 
     async def test_expired_demo_notifies_once(self):
         from handlers.club import watch_demo_expiry
