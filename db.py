@@ -168,7 +168,7 @@ async def mark_demo_notified(user_id: int) -> None:
         await db.commit()
 
 
-async def create_payment(user_id: int, amount: str = "15000.00", now: datetime | None = None) -> int:
+async def create_payment(user_id: int, amount: str, now: datetime | None = None) -> int:
     """Новый счёт. Старые незакрытые счета этого человека больше не напоминают."""
     moment = (now or datetime.now()).isoformat()
     async with aiosqlite.connect(DB_NAME) as db:

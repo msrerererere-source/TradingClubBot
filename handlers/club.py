@@ -40,7 +40,7 @@ from keyboards import (
     DEMO_BUTTON,
     HOME_BUTTON,
     MENU_BUTTON,
-    PAY_BUTTON,
+    PAY_BUTTONS,
     TARIFFS_BUTTON,
     TRY_BUTTON,
     WRITE_BUTTON,
@@ -56,6 +56,7 @@ from keyboards import (
     titan_open_keyboard,
 )
 from services.payment_flow import current_access, start_checkout
+from services.robokassa import COMPANY_SUM, PRIVATE_SUM, format_rubles
 from services.titan_access import build_titan_link
 from subscription_check import check_subscription
 
@@ -153,10 +154,17 @@ def developer_keyboard(url: str) -> InlineKeyboardMarkup:
     )
 
 
+BUTTON_AMOUNTS = {
+    PAY_BUTTONS[0]: PRIVATE_SUM,
+    PAY_BUTTONS[1]: COMPANY_SUM,
+}
+
+
 def tariffs_text() -> str:
     return (
         "💳 Тарифы\n"
-        "📊 Dashboard — единоразовый доступ — 15 000 ₽\n"
+        "Частным трейдерам — единоразовый доступ — 30 000 ₽\n"
+        "Компаниям — единоразовый доступ — 250 000 ₽\n"
         "Полный доступ к терминалу Титан Трекер.\n"
         "Один платёж — бессрочный доступ.\n"
         "Дашборд, скринер спредов, ставки фандинга —\n"
@@ -173,9 +181,9 @@ def tariffs_text() -> str:
     )
 
 
-def checkout_text() -> str:
+def checkout_text(price: str) -> str:
     return (
-        "💳 Оплата доступа — 15 000 ₽\n"
+        f"💳 Оплата доступа — {price}\n"
         "Нажми на кнопку ниже, чтобы перейти\n"
         "к оплате. После оплаты доступ придёт\n"
         "автоматически.\n"
@@ -183,9 +191,9 @@ def checkout_text() -> str:
     )
 
 
-def checkout_unconfigured_text() -> str:
+def checkout_unconfigured_text(price: str) -> str:
     return (
-        "💳 Оплата доступа — 15 000 ₽\n"
+        f"💳 Оплата доступа — {price}\n"
         "Страница оплаты ещё не подключена.\n"
         "Нужны ROBOKASSA_MERCHANT_LOGIN, ROBOKASSA_PASSWORD1 и ROBOKASSA_PASSWORD2."
     )
@@ -404,7 +412,7 @@ async def tariffs_button(message: Message) -> None:
     await message.answer(tariffs_text(), reply_markup=get_tariffs_keyboard())
 
 
-@router.message(F.text == PAY_BUTTON)
+@router.message(F.text.in_(PAY_BUTTONS))
 async def pay_button(message: Message) -> None:
     await upsert_user(message.from_user.id, message.from_user.username)
     access = await current_access(message.from_user.id)
@@ -412,11 +420,13 @@ async def pay_button(message: Message) -> None:
         url, password = access
         await message.answer(already_access_text(url, password), reply_markup=get_home_keyboard())
         return
-    pay_url = await start_checkout(message.from_user.id)
+    amount = BUTTON_AMOUNTS[message.text]
+    price = format_rubles(amount)
+    pay_url = await start_checkout(message.from_user.id, amount)
     if not pay_url:
-        await message.answer(checkout_unconfigured_text(), reply_markup=get_tariffs_keyboard())
+        await message.answer(checkout_unconfigured_text(price), reply_markup=get_tariffs_keyboard())
         return
-    await message.answer(checkout_text(), reply_markup=get_checkout_keyboard(pay_url))
+    await message.answer(checkout_text(price), reply_markup=get_checkout_keyboard(pay_url))
 
 
 @router.callback_query(F.data == "pay_back")
@@ -544,7 +554,11 @@ async def _send_status(message: Message) -> None:
             text = "Срок доступа истёк. Ссылка на терминал закрыта."
         else:
             text = "Доступ ещё не открыт."
-        text += "\nДемо — на 24 часа. Тариф — 15 000 ₽ единоразово.\n\n" + admin_contact()
+        text += (
+            "\nДемо — на 24 часа. "
+            "Частным трейдерам — 30 000 ₽, компаниям — 250 000 ₽, единоразово.\n\n"
+            + admin_contact()
+        )
         markup = get_main_keyboard()
     await message.answer(text, reply_markup=markup)
 

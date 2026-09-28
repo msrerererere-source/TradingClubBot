@@ -10,7 +10,9 @@ CONTACT_BUTTON = "📞 Связаться"
 MENU_BUTTON = "◀️ Главное меню"
 TRY_BUTTON = "🔓 Хочу попробовать"
 BACK_BUTTON = "⬅️ Назад"
-PAY_BUTTON = "💳 Оплатить 15 000 ₽"
+PAY_PRIVATE_BUTTON = "💳 Оплатить 30 000 ₽"
+PAY_COMPANY_BUTTON = "💳 Оплатить 250 000 ₽"
+PAY_BUTTONS = (PAY_PRIVATE_BUTTON, PAY_COMPANY_BUTTON)
 GO_PAY_BUTTON = "💳 Перейти к оплате"
 HOME_BUTTON = "⬅️ В главное меню"
 WRITE_BUTTON = "💬 Написать разработчику"
@@ -59,9 +61,10 @@ def get_vip_action_keyboard():
 
 def get_tariffs_keyboard():
     builder = ReplyKeyboardBuilder()
-    builder.button(text=PAY_BUTTON)
+    builder.button(text=PAY_PRIVATE_BUTTON)
+    builder.button(text=PAY_COMPANY_BUTTON)
     builder.button(text=BACK_BUTTON)
-    builder.adjust(2)
+    builder.adjust(1)
     return builder.as_markup(resize_keyboard=True)
 
 
@@ -83,7 +86,8 @@ def get_home_keyboard():
 
 def get_pay_again_keyboard():
     builder = ReplyKeyboardBuilder()
-    builder.button(text=PAY_BUTTON)
+    builder.button(text=PAY_PRIVATE_BUTTON)
+    builder.button(text=PAY_COMPANY_BUTTON)
     builder.adjust(1)
     return builder.as_markup(resize_keyboard=True)
 

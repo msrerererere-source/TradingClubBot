@@ -12,8 +12,9 @@ from config import (
     robokassa_password2,
 )
 
-OUT_SUM = "15000.00"
-PRICE = Decimal("15000.00")
+PRIVATE_SUM = "30000.00"
+COMPANY_SUM = "250000.00"
+PRICES = (Decimal(PRIVATE_SUM), Decimal(COMPANY_SUM))
 PAY_URL = "https://auth.robokassa.ru/Merchant/Index.aspx"
 
 
@@ -21,12 +22,30 @@ def robokassa_ready() -> bool:
     return bool(robokassa_merchant_login() and robokassa_password1() and robokassa_password2())
 
 
-def amount_is_price(raw: str) -> bool:
+def parse_amount(raw: str) -> Decimal | None:
     try:
-        value = Decimal(str(raw).replace(",", "."))
+        return Decimal(str(raw).replace(",", "."))
     except (InvalidOperation, ValueError):
-        return False
-    return value == PRICE
+        return None
+
+
+def amount_is_price(raw: str) -> bool:
+    value = parse_amount(raw)
+    return value in PRICES
+
+
+def same_amount(left: str, right: str) -> bool:
+    parsed_left = parse_amount(left)
+    parsed_right = parse_amount(right)
+    return parsed_left is not None and parsed_left == parsed_right
+
+
+def format_rubles(raw: str) -> str:
+    value = parse_amount(raw)
+    if value is None:
+        return str(raw)
+    grouped = f"{int(value):,}".replace(",", " ")
+    return f"{grouped} ₽"
 
 
 def _digest(payload: str) -> str:
@@ -37,11 +56,11 @@ def _digest(payload: str) -> str:
     return hashlib.md5(encoded).hexdigest().upper()
 
 
-def payment_signature(inv_id: int, user_id: int) -> str:
+def payment_signature(inv_id: int, user_id: int, out_sum: str) -> str:
     payload = ":".join(
         [
             robokassa_merchant_login(),
-            OUT_SUM,
+            out_sum,
             str(inv_id),
             robokassa_password1(),
             f"Shp_user={user_id}",
@@ -50,13 +69,13 @@ def payment_signature(inv_id: int, user_id: int) -> str:
     return _digest(payload)
 
 
-def build_payment_url(inv_id: int, user_id: int) -> str:
+def build_payment_url(inv_id: int, user_id: int, out_sum: str) -> str:
     params = {
         "MerchantLogin": robokassa_merchant_login(),
-        "OutSum": OUT_SUM,
+        "OutSum": out_sum,
         "InvId": str(inv_id),
         "Description": "Доступ Титан Трекер",
-        "SignatureValue": payment_signature(inv_id, user_id),
+        "SignatureValue": payment_signature(inv_id, user_id, out_sum),
         "Culture": "ru",
         "Encoding": "utf-8",
         "Shp_user": str(user_id),

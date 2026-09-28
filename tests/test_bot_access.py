@@ -243,6 +243,8 @@ class TitanFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("демо", text.lower())
         self.assertIn("тариф", text.lower())
         self.assertNotIn("15 000", text)
+        self.assertNotIn("30 000", text)
+        self.assertNotIn("250 000", text)
         self.assertNotIn("единоразово", text)
         self.assertNotIn("https://titan.example", text)
         self.assertFalse(hasattr(message, "gallery"))
@@ -318,31 +320,32 @@ class TitanFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("TITAN_DEMO_URL", text)
         self.assertNotIn("Пароль:", text)
 
-    async def test_tariffs_are_one_dashboard_payment(self):
+    async def test_tariffs_are_private_and_company_payments(self):
         from handlers.club import pay_button, tariffs_button, tariffs_text
-        from keyboards import BACK_BUTTON, PAY_BUTTON
+        from keyboards import BACK_BUTTON, PAY_COMPANY_BUTTON, PAY_PRIVATE_BUTTON
 
         message = FakeMessage(FakeUser(24, "guest"))
         await tariffs_button(message)
         self.assertEqual(message.answers[0][0], tariffs_text())
         text = message.answers[0][0]
-        self.assertIn("15 000 ₽", text)
+        self.assertIn("Частным трейдерам — единоразовый доступ — 30 000 ₽", text)
+        self.assertIn("Компаниям — единоразовый доступ — 250 000 ₽", text)
+        self.assertNotIn("15 000", text)
         self.assertIn("Банковская карта", text)
         self.assertIn("СБП", text)
         self.assertNotIn("Криптовалюта", text)
-        self.assertIn("единоразовый доступ", text)
         self.assertIn("бессрочный доступ", text)
         for banned in ("3 000", "7 500", "25 000", "подписк"):
             self.assertNotIn(banned, text.lower() if banned == "подписк" else text)
         labels = [button.text for row in message.answers[0][1].keyboard for button in row]
-        self.assertEqual(labels, [PAY_BUTTON, BACK_BUTTON])
-        self.assertEqual(len(message.answers[0][1].keyboard), 1)
+        self.assertEqual(labels, [PAY_PRIVATE_BUTTON, PAY_COMPANY_BUTTON, BACK_BUTTON])
 
         pay = FakeMessage(FakeUser(24, "guest"))
-        pay.text = PAY_BUTTON
+        pay.text = PAY_PRIVATE_BUTTON
         await pay_button(pay)
         paid = pay.answers[0][0]
-        self.assertIn("15 000 ₽", paid)
+        self.assertIn("30 000 ₽", paid)
+        self.assertNotIn("250 000", paid)
         self.assertIn("ROBOKASSA_MERCHANT_LOGIN", paid)
         self.assertNotIn("auth.robokassa.ru", paid)
         self.assertNotIn("https://titan.example", paid)
@@ -354,15 +357,17 @@ class TitanFlowTests(unittest.IsolatedAsyncioTestCase):
         from urllib.parse import parse_qs, urlsplit
 
         from handlers.club import pay_button, tariffs_button
-        from keyboards import GO_PAY_BUTTON, HOME_BUTTON
+        from keyboards import GO_PAY_BUTTON, HOME_BUTTON, PAY_COMPANY_BUTTON, PAY_PRIVATE_BUTTON
         from services.payment_flow import accept_robokassa_result
-        from services.robokassa import OUT_SUM, result_signature
+        from services.robokassa import COMPANY_SUM, PRIVATE_SUM, result_signature
 
         os.environ["ROBOKASSA_MERCHANT_LOGIN"] = "titan-shop"
         os.environ["ROBOKASSA_PASSWORD1"] = "pass-one"
         os.environ["ROBOKASSA_PASSWORD2"] = "pass-two"
         pay = FakeMessage(FakeUser(27, "buyer"))
+        pay.text = PAY_PRIVATE_BUTTON
         await pay_button(pay)
+        self.assertIn("30 000 ₽", pay.answers[0][0])
         self.assertIn("После оплаты доступ придёт", pay.answers[0][0])
         buttons = pay.answers[0][1].inline_keyboard[0]
         self.assertEqual(buttons[0].text, GO_PAY_BUTTON)
@@ -370,14 +375,21 @@ class TitanFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(buttons[1].callback_data, "pay_back")
         query = parse_qs(urlsplit(buttons[0].url).query)
         inv = query["InvId"][0]
-        self.assertEqual(query["OutSum"], [OUT_SUM])
+        self.assertEqual(query["OutSum"], [PRIVATE_SUM])
         self.assertEqual(query["Shp_user"], ["27"])
 
+        company = FakeMessage(FakeUser(30, "firm"))
+        company.text = PAY_COMPANY_BUTTON
+        await pay_button(company)
+        company_query = parse_qs(urlsplit(company.answers[0][1].inline_keyboard[0][0].url).query)
+        self.assertEqual(company_query["OutSum"], [COMPANY_SUM])
+        self.assertIn("250 000 ₽", company.answers[0][0])
+
         params = {
-            "OutSum": OUT_SUM,
+            "OutSum": PRIVATE_SUM,
             "InvId": inv,
             "Shp_user": "27",
-            "SignatureValue": result_signature(OUT_SUM, inv, {"Shp_user": "27"}),
+            "SignatureValue": result_signature(PRIVATE_SUM, inv, {"Shp_user": "27"}),
         }
         bad = dict(params, SignatureValue="0" * 32)
         self.assertIsNone(await accept_robokassa_result(bad))
@@ -390,9 +402,15 @@ class TitanFlowTests(unittest.IsolatedAsyncioTestCase):
         mismatch = dict(
             params,
             Shp_user="1",
-            SignatureValue=result_signature(OUT_SUM, inv, {"Shp_user": "1"}),
+            SignatureValue=result_signature(PRIVATE_SUM, inv, {"Shp_user": "1"}),
         )
         self.assertIsNone(await accept_robokassa_result(mismatch))
+        other_price = dict(
+            params,
+            OutSum=COMPANY_SUM,
+            SignatureValue=result_signature(COMPANY_SUM, inv, {"Shp_user": "27"}),
+        )
+        self.assertIsNone(await accept_robokassa_result(other_price))
 
         outcome = await accept_robokassa_result(params)
         self.assertTrue(outcome["needs_send"])
@@ -418,12 +436,14 @@ class TitanFlowTests(unittest.IsolatedAsyncioTestCase):
         import aiosqlite
 
         from handlers.club import watch_unpaid
+        from keyboards import PAY_COMPANY_BUTTON, PAY_PRIVATE_BUTTON
+        from services.robokassa import PRIVATE_SUM
 
         os.environ["ROBOKASSA_MERCHANT_LOGIN"] = "titan-shop"
         os.environ["ROBOKASSA_PASSWORD1"] = "pass-one"
         os.environ["ROBOKASSA_PASSWORD2"] = "pass-two"
-        inv_id = await db.create_payment(28)
-        recent = await db.create_payment(29)
+        inv_id = await db.create_payment(28, PRIVATE_SUM)
+        recent = await db.create_payment(29, PRIVATE_SUM)
         past = (datetime.now() - timedelta(minutes=31)).isoformat()
         async with aiosqlite.connect(db.DB_NAME) as connection:
             await connection.execute(
@@ -445,7 +465,7 @@ class TitanFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item[0] for item in bot.sent], [28])
         self.assertIn("платёж не завершён", bot.sent[0][1])
         labels = [button.text for row in bot.sent[0][2].keyboard for button in row]
-        self.assertEqual(labels, ["💳 Оплатить 15 000 ₽"])
+        self.assertEqual(labels, [PAY_PRIVATE_BUTTON, PAY_COMPANY_BUTTON])
         self.assertNotEqual(recent, inv_id)
 
     async def test_contact_lists_nine_exchanges_and_developer_link(self):
