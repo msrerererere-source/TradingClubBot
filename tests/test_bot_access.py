@@ -1,0 +1,538 @@
+import os
+import tempfile
+import unittest
+from datetime import datetime, timedelta
+from urllib.parse import parse_qs, urlsplit
+
+import db
+from services.titan_access import build_titan_link, verify_titan_access
+
+
+class TitanLinkTests(unittest.TestCase):
+    def setUp(self):
+        self._env = {
+            key: os.environ.get(key)
+            for key in ("TITAN_TRACKER_URL", "TITAN_ACCESS_SECRET", "TITAN_ACCESS_TTL_HOURS")
+        }
+
+    def tearDown(self):
+        for key, value in self._env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    def test_missing_url_returns_nothing(self):
+        os.environ["TITAN_TRACKER_URL"] = ""
+        os.environ["TITAN_ACCESS_SECRET"] = "secret"
+        self.assertIsNone(build_titan_link(10))
+
+    def test_without_secret_link_stays_shared(self):
+        os.environ["TITAN_TRACKER_URL"] = "https://titan.example/app"
+        os.environ["TITAN_ACCESS_SECRET"] = ""
+        self.assertEqual(build_titan_link(10), ("https://titan.example/app", False))
+
+    def test_signed_link_roundtrip(self):
+        os.environ["TITAN_TRACKER_URL"] = "https://titan.example/app?ref=club"
+        os.environ["TITAN_ACCESS_SECRET"] = "club-secret"
+        os.environ["TITAN_ACCESS_TTL_HOURS"] = "12"
+        now = 1_700_000_000
+        link, personal = build_titan_link(42, now=now)
+        self.assertTrue(personal)
+        query = parse_qs(urlsplit(link).query)
+        self.assertEqual(query["uid"], ["42"])
+        self.assertEqual(query["ref"], ["club"])
+        exp = int(query["exp"][0])
+        self.assertEqual(exp, now + 12 * 3600)
+        self.assertTrue(verify_titan_access(42, exp, query["sig"][0], now=now + 10))
+        self.assertFalse(verify_titan_access(42, exp, query["sig"][0], now=exp + 1))
+        self.assertFalse(verify_titan_access(7, exp, query["sig"][0], now=now + 10))
+        self.assertFalse(verify_titan_access(42, exp, "0" * 64, now=now + 10))
+
+
+class VipStoreTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self._previous = db.DB_NAME
+        handle, path = tempfile.mkstemp(suffix=".db")
+        os.close(handle)
+        self._path = path
+        db.DB_NAME = path
+        await db.init_db()
+
+    async def asyncTearDown(self):
+        db.DB_NAME = self._previous
+        os.remove(self._path)
+
+    async def test_start_does_not_wipe_vip(self):
+        await db.upsert_user(5, "member")
+        await db.set_vip_subscription(5, 30)
+        await db.upsert_user(5, "member_renamed")
+        status = await db.check_vip_status(5)
+        self.assertTrue(status["is_vip"])
+        self.assertFalse(status["is_expired"])
+        user = await db.get_user(5)
+        self.assertEqual(user["username"], "member_renamed")
+
+    async def test_expired_vip_is_not_active(self):
+        await db.set_vip_subscription(8, 30)
+        past = (datetime.now() - timedelta(days=1)).isoformat()
+        import aiosqlite
+
+        async with aiosqlite.connect(db.DB_NAME) as connection:
+            await connection.execute(
+                "UPDATE users SET expires_at = ? WHERE user_id = ?",
+                (past, 8),
+            )
+            await connection.commit()
+        from subscription_check import check_subscription
+
+        self.assertFalse(await check_subscription(8))
+
+    async def test_cancel_closes_access(self):
+        await db.set_vip_subscription(9, 10)
+        await db.cancel_vip_subscription(9)
+        from subscription_check import check_subscription
+
+        self.assertFalse(await check_subscription(9))
+
+    async def test_demo_columns_added_to_old_table(self):
+        import aiosqlite
+
+        async with aiosqlite.connect(db.DB_NAME) as connection:
+            await connection.execute("DROP TABLE users")
+            await connection.execute(
+                """
+                CREATE TABLE users (
+                    user_id INTEGER PRIMARY KEY,
+                    username TEXT,
+                    is_vip INTEGER DEFAULT 0,
+                    expires_at TEXT,
+                    joined_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            await connection.commit()
+        await db.init_db()
+        await db.set_demo_access(3, "ABC123", "2026-09-27T12:00:00")
+        user = await db.get_user(3)
+        self.assertEqual(user["demo_password"], "ABC123")
+        self.assertEqual(user["demo_until"], "2026-09-27T12:00:00")
+
+
+class FakeUser:
+    def __init__(self, user_id: int, username: str):
+        self.id = user_id
+        self.username = username
+
+
+class FakeMessage:
+    def __init__(self, user: FakeUser):
+        self.from_user = user
+        self.answers: list[tuple[str, object]] = []
+        self.photos: list[dict] = []
+
+    async def answer(self, text: str, reply_markup=None):
+        self.answers.append((text, reply_markup))
+
+    async def answer_photo(self, photo, caption=None, reply_markup=None):
+        self.photos.append({"photo": photo, "caption": caption, "reply_markup": reply_markup})
+
+    async def answer_media_group(self, media):
+        self.gallery = list(media)
+
+
+class TitanFlowTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self._previous = db.DB_NAME
+        handle, path = tempfile.mkstemp(suffix=".db")
+        os.close(handle)
+        self._path = path
+        db.DB_NAME = path
+        await db.init_db()
+        self._env = {
+            key: os.environ.get(key)
+            for key in (
+                "TITAN_TRACKER_URL",
+                "TITAN_ACCESS_SECRET",
+                "TITAN_ACCESS_TTL_HOURS",
+                "TITAN_DEMO_URL",
+                "TITAN_DEMO_PASSWORD",
+                "ROBOKASSA_MERCHANT_LOGIN",
+                "ROBOKASSA_PASSWORD1",
+                "ROBOKASSA_PASSWORD2",
+                "ROBOKASSA_TEST",
+            )
+        }
+        os.environ["TITAN_TRACKER_URL"] = "https://titan.example/app"
+        os.environ["TITAN_ACCESS_SECRET"] = "club-secret"
+        os.environ["TITAN_ACCESS_TTL_HOURS"] = "12"
+        os.environ["TITAN_DEMO_URL"] = ""
+        os.environ["TITAN_DEMO_PASSWORD"] = ""
+        os.environ["ROBOKASSA_MERCHANT_LOGIN"] = ""
+        os.environ["ROBOKASSA_PASSWORD1"] = ""
+        os.environ["ROBOKASSA_PASSWORD2"] = ""
+        os.environ["ROBOKASSA_TEST"] = "0"
+
+    async def asyncTearDown(self):
+        db.DB_NAME = self._previous
+        os.remove(self._path)
+        for key, value in self._env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    async def test_start_menu_is_exactly_four_buttons(self):
+        from handlers.club import WELCOME, cmd_start
+        from keyboards import ABOUT_BUTTON, CONTACT_BUTTON, DEMO_BUTTON, TARIFFS_BUTTON
+
+        message = FakeMessage(FakeUser(15, "guest"))
+        await cmd_start(message)
+        self.assertEqual(message.answers[0][0], WELCOME)
+        self.assertEqual(len(message.answers), 1)
+        labels = [button.text for row in message.answers[0][1].keyboard for button in row]
+        self.assertEqual(labels, [ABOUT_BUTTON, DEMO_BUTTON, TARIFFS_BUTTON, CONTACT_BUTTON])
+
+    async def test_about_sends_three_screens_and_two_buttons(self):
+        from handlers.club import about_button, about_text
+        from keyboards import BACK_BUTTON, TRY_BUTTON
+
+        message = FakeMessage(FakeUser(15, "guest"))
+        await about_button(message)
+        self.assertEqual(message.answers[0][0], about_text())
+        self.assertIn("14 секунд", message.answers[0][0])
+        labels = [button.text for row in message.answers[0][1].keyboard for button in row]
+        self.assertEqual(labels, [TRY_BUTTON, BACK_BUTTON])
+        self.assertEqual(len(message.answers[0][1].keyboard), 1)
+        self.assertEqual(
+            [item.caption for item in message.gallery],
+            ["Скриншот дашборда", "Скриншот скринера", "Скриншот фандинга"],
+        )
+        names = [str(item.media.path) for item in message.gallery]
+        self.assertTrue(names[0].endswith("02-dashboard.jpg"))
+        self.assertTrue(names[1].endswith("03-screener.jpg"))
+        self.assertTrue(names[2].endswith("04-funding.jpg"))
+        self.assertEqual(message.photos, [])
+
+    async def test_try_button_opens_demo_and_back_returns_menu(self):
+        from handlers.club import WELCOME, demo_button, main_menu_button
+        from keyboards import ABOUT_BUTTON, BACK_BUTTON, TARIFFS_BUTTON, TRY_BUTTON
+
+        message = FakeMessage(FakeUser(26, "guest"))
+        message.text = TRY_BUTTON
+        await demo_button(message)
+        text = message.answers[-1][0]
+        self.assertIn("Логин: demo", text)
+        self.assertIn("Пароль:", text)
+        labels = [button.text for row in message.answers[-1][1].keyboard for button in row]
+        self.assertEqual(labels, [TARIFFS_BUTTON, BACK_BUTTON])
+
+        back = FakeMessage(FakeUser(26, "guest"))
+        back.text = BACK_BUTTON
+        await main_menu_button(back)
+        self.assertEqual(back.answers[0][0], WELCOME)
+        menu = [button.text for row in back.answers[0][1].keyboard for button in row]
+        self.assertEqual(menu[0], ABOUT_BUTTON)
+
+    async def test_guest_does_not_receive_link(self):
+        from handlers.club import present_titan
+
+        message = FakeMessage(FakeUser(15, "guest"))
+        await present_titan(message)
+        text = "\n".join(item[0] for item in message.answers)
+        self.assertIn("демо", text.lower())
+        self.assertIn("тариф", text.lower())
+        self.assertNotIn("15 000", text)
+        self.assertNotIn("30 000", text)
+        self.assertNotIn("250 000", text)
+        self.assertNotIn("единоразово", text)
+        self.assertNotIn("https://titan.example", text)
+        self.assertFalse(hasattr(message, "gallery"))
+
+    async def test_demo_issues_link_and_password_for_24h(self):
+        from handlers.club import DEMO_ALPHABET, demo_button
+
+        message = FakeMessage(FakeUser(21, "buyer"))
+        await demo_button(message)
+        text = "\n".join(item[0] for item in message.answers)
+        self.assertIn("24 часа", text)
+        self.assertIn("Логин: demo", text)
+        self.assertIn("терминал не отправляет заявки", text)
+        self.assertIn("https://titan.example/app", text)
+        self.assertNotIn("uid=", text)
+        self.assertNotIn("sig=", text)
+        password = _line_value(text, "Пароль:")
+        self.assertEqual(len(password), 6)
+        self.assertTrue(set(password) <= set(DEMO_ALPHABET))
+        user = await db.get_user(21)
+        until = datetime.fromisoformat(user["demo_until"])
+        remaining = (until - datetime.now()).total_seconds()
+        self.assertGreater(remaining, 23.9 * 3600)
+        self.assertLess(remaining, 24 * 3600 + 30)
+        from keyboards import BACK_BUTTON, TARIFFS_BUTTON
+
+        labels = [button.text for row in message.answers[-1][1].keyboard for button in row]
+        self.assertEqual(labels, [TARIFFS_BUTTON, BACK_BUTTON])
+
+    async def test_demo_reuses_password_until_expiry_then_reissues(self):
+        import aiosqlite
+
+        from handlers.club import demo_button
+
+        message = FakeMessage(FakeUser(22, "demo"))
+        await demo_button(message)
+        first = _line_value(message.answers[-1][0], "Пароль:")
+        os.environ["TITAN_DEMO_PASSWORD"] = "SITE99"
+        again = FakeMessage(FakeUser(22, "demo"))
+        await demo_button(again)
+        self.assertEqual(_line_value(again.answers[-1][0], "Пароль:"), first)
+        past = (datetime.now() - timedelta(minutes=1)).isoformat()
+        async with aiosqlite.connect(db.DB_NAME) as connection:
+            await connection.execute(
+                "UPDATE users SET demo_until = ? WHERE user_id = ?",
+                (past, 22),
+            )
+            await connection.commit()
+        renewed = FakeMessage(FakeUser(22, "demo"))
+        await demo_button(renewed)
+        self.assertEqual(_line_value(renewed.answers[-1][0], "Пароль:"), "SITE99")
+        self.assertNotIn("uid=", renewed.answers[-1][0])
+
+    async def test_paid_user_gets_real_link_instead_of_demo(self):
+        from handlers.club import demo_button
+
+        await db.set_vip_subscription(16, 30)
+        message = FakeMessage(FakeUser(16, "member"))
+        await demo_button(message)
+        text = "\n".join(item[0] for item in message.answers)
+        self.assertNotIn("Пароль:", text)
+        opened = next(item for item in message.answers if "Титан Трекер открыт" in item[0])
+        self.assertIn("uid=16", opened[1].inline_keyboard[0][0].url)
+
+    async def test_demo_without_url_does_not_invent_password(self):
+        from handlers.club import demo_button
+
+        os.environ["TITAN_TRACKER_URL"] = ""
+        os.environ["TITAN_DEMO_URL"] = ""
+        message = FakeMessage(FakeUser(23, "guest"))
+        await demo_button(message)
+        text = "\n".join(item[0] for item in message.answers)
+        self.assertIn("TITAN_DEMO_URL", text)
+        self.assertNotIn("Пароль:", text)
+
+    async def test_tariffs_are_private_and_company_payments(self):
+        from handlers.club import pay_button, tariffs_button, tariffs_text
+        from keyboards import BACK_BUTTON, PAY_COMPANY_BUTTON, PAY_PRIVATE_BUTTON
+
+        message = FakeMessage(FakeUser(24, "guest"))
+        await tariffs_button(message)
+        self.assertEqual(message.answers[0][0], tariffs_text())
+        text = message.answers[0][0]
+        self.assertIn("Частным трейдерам — единоразовый доступ — 30 000 ₽", text)
+        self.assertIn("Компаниям — единоразовый доступ — 250 000 ₽", text)
+        self.assertIn("Один пакет для компании — до 10 человек.", text)
+        self.assertNotIn("15 000", text)
+        self.assertIn("Банковская карта", text)
+        self.assertIn("СБП", text)
+        self.assertNotIn("Криптовалюта", text)
+        self.assertIn("бессрочный доступ", text)
+        for banned in ("3 000", "7 500", "25 000", "подписк"):
+            self.assertNotIn(banned, text.lower() if banned == "подписк" else text)
+        labels = [button.text for row in message.answers[0][1].keyboard for button in row]
+        self.assertEqual(labels, [PAY_PRIVATE_BUTTON, PAY_COMPANY_BUTTON, BACK_BUTTON])
+
+        pay = FakeMessage(FakeUser(24, "guest"))
+        pay.text = PAY_PRIVATE_BUTTON
+        await pay_button(pay)
+        paid = pay.answers[0][0]
+        self.assertIn("30 000 ₽", paid)
+        self.assertNotIn("250 000", paid)
+        self.assertNotIn("10 человек", paid)
+        self.assertIn("ROBOKASSA_MERCHANT_LOGIN", paid)
+        self.assertNotIn("auth.robokassa.ru", paid)
+        self.assertNotIn("https://titan.example", paid)
+        from subscription_check import check_subscription
+
+        self.assertFalse(await check_subscription(24))
+
+    async def test_checkout_opens_robokassa_and_result_grants_password(self):
+        from urllib.parse import parse_qs, urlsplit
+
+        from handlers.club import pay_button, tariffs_button
+        from keyboards import GO_PAY_BUTTON, HOME_BUTTON, PAY_COMPANY_BUTTON, PAY_PRIVATE_BUTTON
+        from services.payment_flow import accept_robokassa_result
+        from services.robokassa import COMPANY_SUM, PRIVATE_SUM, result_signature
+
+        os.environ["ROBOKASSA_MERCHANT_LOGIN"] = "titan-shop"
+        os.environ["ROBOKASSA_PASSWORD1"] = "pass-one"
+        os.environ["ROBOKASSA_PASSWORD2"] = "pass-two"
+        pay = FakeMessage(FakeUser(27, "buyer"))
+        pay.text = PAY_PRIVATE_BUTTON
+        await pay_button(pay)
+        self.assertIn("30 000 ₽", pay.answers[0][0])
+        self.assertIn("После оплаты доступ придёт", pay.answers[0][0])
+        buttons = pay.answers[0][1].inline_keyboard[0]
+        self.assertEqual(buttons[0].text, GO_PAY_BUTTON)
+        self.assertIn("auth.robokassa.ru", buttons[0].url)
+        self.assertEqual(buttons[1].callback_data, "pay_back")
+        query = parse_qs(urlsplit(buttons[0].url).query)
+        inv = query["InvId"][0]
+        self.assertEqual(query["OutSum"], [PRIVATE_SUM])
+        self.assertEqual(query["Shp_user"], ["27"])
+
+        company = FakeMessage(FakeUser(30, "firm"))
+        company.text = PAY_COMPANY_BUTTON
+        await pay_button(company)
+        company_query = parse_qs(urlsplit(company.answers[0][1].inline_keyboard[0][0].url).query)
+        self.assertEqual(company_query["OutSum"], [COMPANY_SUM])
+        self.assertIn("250 000 ₽", company.answers[0][0])
+        self.assertIn("Один пакет — до 10 человек.", company.answers[0][0])
+        self.assertNotIn("10 человек", pay.answers[0][0])
+
+        params = {
+            "OutSum": PRIVATE_SUM,
+            "InvId": inv,
+            "Shp_user": "27",
+            "SignatureValue": result_signature(PRIVATE_SUM, inv, {"Shp_user": "27"}),
+        }
+        bad = dict(params, SignatureValue="0" * 32)
+        self.assertIsNone(await accept_robokassa_result(bad))
+        wrong_sum = dict(
+            params,
+            OutSum="100.00",
+            SignatureValue=result_signature("100.00", inv, {"Shp_user": "27"}),
+        )
+        self.assertIsNone(await accept_robokassa_result(wrong_sum))
+        mismatch = dict(
+            params,
+            Shp_user="1",
+            SignatureValue=result_signature(PRIVATE_SUM, inv, {"Shp_user": "1"}),
+        )
+        self.assertIsNone(await accept_robokassa_result(mismatch))
+        other_price = dict(
+            params,
+            OutSum=COMPANY_SUM,
+            SignatureValue=result_signature(COMPANY_SUM, inv, {"Shp_user": "27"}),
+        )
+        self.assertIsNone(await accept_robokassa_result(other_price))
+
+        outcome = await accept_robokassa_result(params)
+        self.assertTrue(outcome["needs_send"])
+        self.assertFalse(outcome["company"])
+        self.assertTrue(outcome["password"].startswith("Titan-"))
+        self.assertEqual(len(outcome["password"]), 12)
+        user = await db.get_user(27)
+        self.assertEqual(user["access_status"], "активен")
+        self.assertEqual(user["access_password"], outcome["password"])
+        self.assertIsNone(user["expires_at"])
+        again = await accept_robokassa_result(params)
+        self.assertEqual(again["password"], outcome["password"])
+
+        again_view = FakeMessage(FakeUser(27, "buyer"))
+        await tariffs_button(again_view)
+        text = again_view.answers[0][0]
+        self.assertIn("У тебя уже есть доступ", text)
+        self.assertIn(outcome["password"], text)
+        self.assertIn("https://titan.example/app", text)
+        labels = [button.text for row in again_view.answers[0][1].keyboard for button in row]
+        self.assertEqual(labels, [HOME_BUTTON])
+
+    async def test_unpaid_checkout_is_reminded_once_after_30_minutes(self):
+        import aiosqlite
+
+        from handlers.club import watch_unpaid
+        from keyboards import PAY_COMPANY_BUTTON, PAY_PRIVATE_BUTTON
+        from services.robokassa import PRIVATE_SUM
+
+        os.environ["ROBOKASSA_MERCHANT_LOGIN"] = "titan-shop"
+        os.environ["ROBOKASSA_PASSWORD1"] = "pass-one"
+        os.environ["ROBOKASSA_PASSWORD2"] = "pass-two"
+        inv_id = await db.create_payment(28, PRIVATE_SUM)
+        recent = await db.create_payment(29, PRIVATE_SUM)
+        past = (datetime.now() - timedelta(minutes=31)).isoformat()
+        async with aiosqlite.connect(db.DB_NAME) as connection:
+            await connection.execute(
+                "UPDATE payments SET created_at = ? WHERE inv_id = ?",
+                (past, inv_id),
+            )
+            await connection.commit()
+
+        class FakeBot:
+            def __init__(self):
+                self.sent = []
+
+            async def send_message(self, chat_id, text, reply_markup=None):
+                self.sent.append((chat_id, text, reply_markup))
+
+        bot = FakeBot()
+        await watch_unpaid(bot)
+        await watch_unpaid(bot)
+        self.assertEqual([item[0] for item in bot.sent], [28])
+        self.assertIn("платёж не завершён", bot.sent[0][1])
+        labels = [button.text for row in bot.sent[0][2].keyboard for button in row]
+        self.assertEqual(labels, [PAY_PRIVATE_BUTTON, PAY_COMPANY_BUTTON])
+        self.assertNotEqual(recent, inv_id)
+
+    async def test_contact_lists_nine_exchanges_and_developer_link(self):
+        from handlers.club import EXCHANGES, contact_button, contact_text, developer_button
+        from keyboards import BACK_BUTTON, WRITE_BUTTON
+
+        message = FakeMessage(FakeUser(25, "guest"))
+        await contact_button(message)
+        self.assertEqual(message.answers[0][0], contact_text())
+        text = message.answers[0][0]
+        self.assertEqual(len(EXCHANGES), 9)
+        for name in EXCHANGES:
+            self.assertIn(name, text)
+        self.assertIn("Это бот-автомат?", text)
+        self.assertIn("заявки не отправляет", text)
+        labels = [button.text for row in message.answers[0][1].keyboard for button in row]
+        self.assertEqual(labels, [WRITE_BUTTON, BACK_BUTTON])
+
+        writer = FakeMessage(FakeUser(25, "guest"))
+        writer.text = WRITE_BUTTON
+        await developer_button(writer)
+        self.assertIn("https://t.me/Natilev500", writer.answers[0][0])
+        self.assertEqual(writer.answers[0][1].inline_keyboard[0][0].text, WRITE_BUTTON)
+        self.assertEqual(writer.answers[0][1].inline_keyboard[0][0].url, "https://t.me/Natilev500")
+
+    async def test_expired_demo_notifies_once(self):
+        from handlers.club import watch_demo_expiry
+
+        class FakeBot:
+            def __init__(self):
+                self.sent = []
+
+            async def send_message(self, chat_id, text, reply_markup=None):
+                self.sent.append((chat_id, text))
+
+        await db.set_demo_access(30, "ABC123", (datetime.now() - timedelta(minutes=1)).isoformat())
+        bot = FakeBot()
+        await watch_demo_expiry(bot)
+        await watch_demo_expiry(bot)
+        self.assertEqual(len(bot.sent), 1)
+        self.assertEqual(bot.sent[0][0], 30)
+        self.assertIn("Доступ закрыт", bot.sent[0][1])
+
+    async def test_vip_receives_signed_link(self):
+        from handlers.club import present_titan
+
+        await db.set_vip_subscription(16, 30)
+        message = FakeMessage(FakeUser(16, "member"))
+        await present_titan(message)
+        opened = next(item for item in message.answers if "Титан Трекер открыт" in item[0])
+        self.assertIn("https://titan.example/app", opened[1].inline_keyboard[0][0].url)
+        self.assertIn("uid=16", opened[1].inline_keyboard[0][0].url)
+        self.assertFalse(hasattr(message, "gallery"))
+        self.assertEqual(message.photos, [])
+
+
+def _line_value(text: str, prefix: str) -> str:
+    for line in text.splitlines():
+        if line.startswith(prefix):
+            return line[len(prefix):].strip()
+    raise AssertionError(text)
+
+
+if __name__ == "__main__":
+    unittest.main()
