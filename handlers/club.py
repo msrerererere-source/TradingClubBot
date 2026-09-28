@@ -165,6 +165,7 @@ def tariffs_text() -> str:
         "💳 Тарифы\n"
         "Частным трейдерам — единоразовый доступ — 30 000 ₽\n"
         "Компаниям — единоразовый доступ — 250 000 ₽\n"
+        "Один пакет для компании — до 10 человек.\n"
         "Полный доступ к терминалу Титан Трекер.\n"
         "Один платёж — бессрочный доступ.\n"
         "Дашборд, скринер спредов, ставки фандинга —\n"
@@ -181,9 +182,16 @@ def tariffs_text() -> str:
     )
 
 
-def checkout_text(price: str) -> str:
+def _company_limit_line(company: bool) -> str:
+    if not company:
+        return ""
+    return "Один пакет — до 10 человек.\n"
+
+
+def checkout_text(price: str, company: bool = False) -> str:
     return (
         f"💳 Оплата доступа — {price}\n"
+        f"{_company_limit_line(company)}"
         "Нажми на кнопку ниже, чтобы перейти\n"
         "к оплате. После оплаты доступ придёт\n"
         "автоматически.\n"
@@ -191,15 +199,20 @@ def checkout_text(price: str) -> str:
     )
 
 
-def checkout_unconfigured_text(price: str) -> str:
+def checkout_unconfigured_text(price: str, company: bool = False) -> str:
     return (
         f"💳 Оплата доступа — {price}\n"
+        f"{_company_limit_line(company)}"
         "Страница оплаты ещё не подключена.\n"
         "Нужны ROBOKASSA_MERCHANT_LOGIN, ROBOKASSA_PASSWORD1 и ROBOKASSA_PASSWORD2."
     )
 
 
-def access_granted_text(url: str, password: str) -> str:
+def access_granted_text(url: str, password: str, company: bool = False) -> str:
+    if company:
+        notice = "⚠️ Один пакет — до 10 человек. Пароль общий для этого пакета.\n"
+    else:
+        notice = "⚠️ Пароль персональный, не передавай его\nтретьим лицам.\n"
     return (
         "✅ Оплата получена! Доступ открыт.\n"
         "🔗 Ссылка на терминал:\n"
@@ -210,8 +223,7 @@ def access_granted_text(url: str, password: str) -> str:
         "1. Открой ссылку в браузере\n"
         "2. Введи пароль в поле входа\n"
         "3. Терминал готов к работе\n"
-        "⚠️ Пароль персональный, не передавай его\n"
-        "третьим лицам.\n"
+        f"{notice}"
         "Если что-то не работает — напиши в этот\n"
         "бот, мы поможем."
     )
@@ -422,11 +434,15 @@ async def pay_button(message: Message) -> None:
         return
     amount = BUTTON_AMOUNTS[message.text]
     price = format_rubles(amount)
+    company = amount == COMPANY_SUM
     pay_url = await start_checkout(message.from_user.id, amount)
     if not pay_url:
-        await message.answer(checkout_unconfigured_text(price), reply_markup=get_tariffs_keyboard())
+        await message.answer(
+            checkout_unconfigured_text(price, company),
+            reply_markup=get_tariffs_keyboard(),
+        )
         return
-    await message.answer(checkout_text(price), reply_markup=get_checkout_keyboard(pay_url))
+    await message.answer(checkout_text(price, company), reply_markup=get_checkout_keyboard(pay_url))
 
 
 @router.callback_query(F.data == "pay_back")
@@ -436,10 +452,10 @@ async def pay_back(callback: CallbackQuery) -> None:
         await callback.message.answer(WELCOME, reply_markup=get_main_keyboard())
 
 
-async def deliver_paid_access(bot, user_id: int, password: str) -> None:
+async def deliver_paid_access(bot, user_id: int, password: str, company: bool = False) -> None:
     await bot.send_message(
         user_id,
-        access_granted_text(paid_terminal_url(), password),
+        access_granted_text(paid_terminal_url(), password, company),
         reply_markup=get_home_keyboard(),
     )
 
@@ -556,7 +572,8 @@ async def _send_status(message: Message) -> None:
             text = "Доступ ещё не открыт."
         text += (
             "\nДемо — на 24 часа. "
-            "Частным трейдерам — 30 000 ₽, компаниям — 250 000 ₽, единоразово.\n\n"
+            "Частным трейдерам — 30 000 ₽, компаниям — 250 000 ₽ "
+            "за пакет до 10 человек, единоразово.\n\n"
             + admin_contact()
         )
         markup = get_main_keyboard()

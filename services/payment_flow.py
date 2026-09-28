@@ -11,7 +11,13 @@ from db import (
     get_user,
     mark_payment_notified,
 )
-from services.robokassa import build_payment_url, result_is_valid, robokassa_ready, same_amount
+from services.robokassa import (
+    COMPANY_SUM,
+    build_payment_url,
+    result_is_valid,
+    robokassa_ready,
+    same_amount,
+)
 
 ACCESS_ALPHABET = "23456789abcdefghjkmnpqrstuvwxyz"
 
@@ -63,6 +69,7 @@ async def accept_robokassa_result(params: dict[str, str]) -> dict | None:
             "inv_id": inv_id,
             "user_id": payment["user_id"],
             "password": password,
+            "company": same_amount(payment["amount"], COMPANY_SUM),
             "needs_send": not bool(payment["notified"]),
         }
     password = new_access_password()
@@ -72,6 +79,7 @@ async def accept_robokassa_result(params: dict[str, str]) -> dict | None:
         "inv_id": inv_id,
         "user_id": payment["user_id"],
         "password": password,
+        "company": same_amount(payment["amount"], COMPANY_SUM),
         "needs_send": True,
     }
 

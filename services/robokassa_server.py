@@ -24,7 +24,12 @@ def build_result_app(bot) -> web.Application:
             return web.Response(status=400, text="bad sign")
         if outcome["needs_send"]:
             try:
-                await deliver_paid_access(bot, outcome["user_id"], outcome["password"])
+                await deliver_paid_access(
+                    bot,
+                    outcome["user_id"],
+                    outcome["password"],
+                    company=bool(outcome.get("company")),
+                )
             except Exception:
                 log.exception("Не удалось отправить доступ %s", outcome["user_id"])
                 return web.Response(status=500, text="send failed")

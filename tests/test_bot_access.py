@@ -330,6 +330,7 @@ class TitanFlowTests(unittest.IsolatedAsyncioTestCase):
         text = message.answers[0][0]
         self.assertIn("Частным трейдерам — единоразовый доступ — 30 000 ₽", text)
         self.assertIn("Компаниям — единоразовый доступ — 250 000 ₽", text)
+        self.assertIn("Один пакет для компании — до 10 человек.", text)
         self.assertNotIn("15 000", text)
         self.assertIn("Банковская карта", text)
         self.assertIn("СБП", text)
@@ -346,6 +347,7 @@ class TitanFlowTests(unittest.IsolatedAsyncioTestCase):
         paid = pay.answers[0][0]
         self.assertIn("30 000 ₽", paid)
         self.assertNotIn("250 000", paid)
+        self.assertNotIn("10 человек", paid)
         self.assertIn("ROBOKASSA_MERCHANT_LOGIN", paid)
         self.assertNotIn("auth.robokassa.ru", paid)
         self.assertNotIn("https://titan.example", paid)
@@ -384,6 +386,8 @@ class TitanFlowTests(unittest.IsolatedAsyncioTestCase):
         company_query = parse_qs(urlsplit(company.answers[0][1].inline_keyboard[0][0].url).query)
         self.assertEqual(company_query["OutSum"], [COMPANY_SUM])
         self.assertIn("250 000 ₽", company.answers[0][0])
+        self.assertIn("Один пакет — до 10 человек.", company.answers[0][0])
+        self.assertNotIn("10 человек", pay.answers[0][0])
 
         params = {
             "OutSum": PRIVATE_SUM,
@@ -414,6 +418,7 @@ class TitanFlowTests(unittest.IsolatedAsyncioTestCase):
 
         outcome = await accept_robokassa_result(params)
         self.assertTrue(outcome["needs_send"])
+        self.assertFalse(outcome["company"])
         self.assertTrue(outcome["password"].startswith("Titan-"))
         self.assertEqual(len(outcome["password"]), 12)
         user = await db.get_user(27)
